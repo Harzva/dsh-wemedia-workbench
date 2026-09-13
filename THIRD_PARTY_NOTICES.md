@@ -4,6 +4,9 @@ The repository's MIT license applies to its own code, with the existing
 copyright notices in [LICENSE](LICENSE). It does not relicense dependencies,
 platform services, user content, papers, images, fonts or model weights.
 
+- The existing `dsh-oil-creator contributors` copyright notice is retained in
+  [LICENSE](LICENSE); its upstream source is the
+  [dsh-oil-creator MIT license](https://github.com/oil-oil/dsh-oil-creator/blob/main/LICENSE).
 - WeChat body-cleaning reuse retains its upstream MIT notice in
   [docs/third-party/wechat-collector-MIT.txt](docs/third-party/wechat-collector-MIT.txt).
 - DSH, Cordis and JavaScript dependencies are resolved from the package manifest
