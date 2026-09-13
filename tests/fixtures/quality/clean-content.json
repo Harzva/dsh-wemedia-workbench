@@ -1,0 +1,6 @@
+{
+  "title": "Fixture article",
+  "topicKey": "fixture-topic",
+  "sourceIds": ["source:fixture"],
+  "assets": ["cover.png"]
+}
