@@ -7,11 +7,23 @@ function record(value: unknown): value is Record<string, unknown> {
 const jobOperations = new Set<WorkbenchRequest["operation"]>([
   "start_action", "get_job", "cancel_job", "create_content", "channel_start_action",
 ]);
+const batchOperations = new Set<WorkbenchRequest["operation"]>([
+  "start_draft_batch", "advance_draft_batch", "get_draft_batch", "cancel_draft_batch",
+]);
 
 /** Model-facing guidance only; the canonical DTO and execution policy stay unchanged. */
 export function jobGuidance(operation: WorkbenchRequest["operation"], answer: unknown): string | undefined {
   if (!record(answer) || answer.ok !== true || !record(answer.value)) return;
   const value = answer.value;
+  if (operation === "preview_draft_batch") return "Batch preview only: confirm this exact candidate list. No remote drafts or approvals have been created. Only pending entries may be queued through wemedia_start_draft_batch; skipped and blocked entries must not be replaced or forced through.";
+  if (batchOperations.has(operation) && value.schemaVersion === "wemedia.draft-batch/v1") {
+    if (!["running", "completed", "stopped"].includes(String(value.status))) return;
+    const entries = Array.isArray(value.entries) ? value.entries : [];
+    if (value.status === "stopped" && entries.some(entry => record(entry) && entry.status === "running")) return "The queue is stopped but a child job is still active. Cancellation is not rollback. Wait 15-30 seconds, then read this same batch with wemedia_get_draft_batch until its child reaches a terminal state. Do not advance the queue or issue another write; reconcile uncertain remote effects read-only.";
+    if (value.status !== "running") return "The batch is stopped or completed, not necessarily all delivered. Count only succeeded entries; report skipped, blocked, failed and unconfirmed entries separately. Do not resume or retry cancelled/failed entries automatically, and do not infer formal publication.";
+    if (entries.some(entry => record(entry) && entry.status === "running")) return "A child job is active. Wait 15-30 seconds, then read the same batch with wemedia_get_draft_batch. Honor its existing native approval if waiting_user; do not issue another write or stop at a progress report. Never call an alternate create tool for an entry.";
+    return "The durable queue has pending work, not completion. Call wemedia_advance_draft_batch once for this same batchId; it handles one exact article through native approval. Continue serially until completed or stopped, without rewriting articles, creating substitute intents or retrying failed entries.";
+  }
   if (operation === "preview_action" && record(value.intent)) {
     return "Preview only: no save or remote write has occurred. Execute only the exact reviewed intent with wemedia_start_action, honor native approval, then follow its job to a terminal state. A preview is not a saved revision or a delivered draft.";
   }

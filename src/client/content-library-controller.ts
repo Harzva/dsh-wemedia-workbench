@@ -3,6 +3,7 @@ import { LIBRARY_MEDIA_MAX_BYTES, LIBRARY_MEDIA_CHUNK_BYTES } from "../domain/co
 import type { ArticleCategory } from "../domain/articleTaxonomy.ts";
 import type { Channel, ContentRef } from "../domain/primitives.ts";
 import type { BatchPreflightResult } from "../domain/batchPreflight.ts";
+import { DRAFT_BATCH_LIMIT } from "../domain/draftBatch.ts";
 
 export type ContentLibraryKind = "all" | LibraryItem["kind"];
 export type ContentLibraryCategory = "all" | "article" | "video" | "image_text" | "image";
@@ -17,6 +18,8 @@ export type ContentLibraryRequest =
 export type ContentLibraryRequestFn = (request: ContentLibraryRequest, signal: AbortSignal) => Promise<unknown>;
 export const CONTENT_MEDIA_LIMIT = LIBRARY_MEDIA_MAX_BYTES;
 export const CONTENT_MEDIA_CHUNK = LIBRARY_MEDIA_CHUNK_BYTES;
+export const CONTENT_SELECTION_LIMIT = DRAFT_BATCH_LIMIT;
+export const CONTENT_PREFLIGHT_LIMIT = 20;
 
 export type ContentBatchResult = BatchPreflightResult;
 
@@ -231,13 +234,17 @@ export class ContentLibraryController {
     if (!contentRef) return;
     this.cancelBatch();
     const previous = this.state.checked.filter(value => value.contentRef !== contentRef);
-    this.patch({ checked: checked ? previous.length < 20 ? [...previous, { contentRef, title: item.title }] : this.state.checked : previous, batchResult: null, batchError: null });
+    this.patch({ checked: checked ? previous.length < CONTENT_SELECTION_LIMIT ? [...previous, { contentRef, title: item.title }] : this.state.checked : previous, batchResult: null, batchError: null });
   }
   clearChecked(): void { this.cancelBatch(); this.patch({ checked: [], batchResult: null, batchError: null }); }
   setBatchChannels(batchChannels: Channel[]): void { this.cancelBatch(); this.patch({ batchChannels: [...new Set(batchChannels)], batchResult: null, batchError: null }); }
   cancelBatch(): void { this.batchRequest?.abort(); this.batchRequest = null; this.patch({ batchLoading: false }); }
   async runBatchPreflight(): Promise<void> {
     if (!this.state.connected || !this.state.checked.length || !this.state.batchChannels.length || this.stopped) return;
+    if (this.state.checked.length > CONTENT_PREFLIGHT_LIMIT) {
+      this.patch({ batchResult: null, batchError: `批量预检最多支持 ${CONTENT_PREFLIGHT_LIMIT} 份内容，请先减少勾选。` });
+      return;
+    }
     this.cancelBatch();
     const owner = new AbortController(); this.batchRequest = owner;
     const current = () => !this.stopped && !owner.signal.aborted && this.batchRequest === owner;

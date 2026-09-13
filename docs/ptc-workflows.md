@@ -2,7 +2,7 @@
 
 分工固定为：Agent 研究、写作、判断内容质量与审阅图片；DSH 原生 PTC (`run_code`) 编排工具、批量检查和筛选结果；工作台负责文章版本、审阅材料、一次性意图、审批、Job 与结果记录。
 
-工作台不提供第二套代码沙箱、任务调度器或模型账户，也不切换全局 `native` / `code` / `both` 模式。部署已启用 PTC 时，同一组注册工具自动进入 DSH 生成的 SDK；普通调用与 PTC 子调用均走 DSH 原生策略流水线，再调用同一个 `WorkbenchService`。界面也调用该服务，不能提交 `approved` 或伪造 Agent 身份。
+工作台不提供第二套代码沙箱、后台模型调度器或模型账户，也不切换全局 `native` / `code` / `both` 模式。部署已启用 PTC 时，同一组注册工具自动进入 DSH 生成的 SDK；普通调用与 PTC 子调用均走 DSH 原生策略流水线，再调用同一个 `WorkbenchService`。界面也调用该服务，不能提交 `approved` 或伪造 Agent 身份。
 
 ## 本地公式 PNG
 
@@ -18,7 +18,7 @@
 
 ## 可以直接复用的工具
 
-当前注册 45 个 `wemedia_*` 工具；`run_code` 由 DSH 提供，不计入工作台工具数。公式脚本不增加工具或 RPC。
+当前注册 51 个 `wemedia_*` 工具；`run_code` 由 DSH 提供，不计入工作台工具数。公式脚本不增加工具或 RPC。
 
 | 用途 | 工具 | 副作用 |
 | --- | --- | --- |
@@ -28,6 +28,8 @@
 | 渠道状态与预检 | `wemedia_channel_inspect`、`wemedia_channel_preflight` | 只读；可显式在线核对账号，不证明发布权限 |
 | 渠道操作 | `wemedia_channel_preview_action`、`wemedia_channel_start_action` | 精确意图；本地准备、远端草稿与正式发表分别处理 |
 | 多渠道批量预检 | `wemedia_batch_preflight` | 只读；最多 20 篇 × 4 渠道，逐项隔离 |
+| 微信批量草稿 | `wemedia_preview_draft_batch`、`wemedia_start_draft_batch`、`wemedia_advance_draft_batch` | 预览清单／持久排队／逐篇原生审批；不正式发布 |
+| 微信批次状态 | `wemedia_list_draft_batches`、`wemedia_get_draft_batch`、`wemedia_cancel_draft_batch` | 查看逐篇结果／停止队列；取消不等于回滚 |
 | 主稿与来源关系 | `wemedia_mapping_inspect`、`wemedia_mapping_preview`、`wemedia_mapping_apply` | 读取／预览／一次本地映射提交，不写原稿 |
 | 多根设置 | `wemedia_setup_inspect`、`wemedia_setup_preview`、`wemedia_setup_apply` | 读取／预览／原生设置提交，随后重连核对 |
 | 配置与能力 | `wemedia_snapshot`、`wemedia_refresh` | 读取；refresh 更新本地索引 |
@@ -43,6 +45,30 @@
 | 任务与取消 | `wemedia_get_job`、`wemedia_cancel_job` | 读取状态／请求取消；不是回滚 |
 
 工具返回 `{ ok: true, value, revision }` 或 `{ ok: false, error }`，其中搜索页、质量问题、版本、意图和 Job 都有明确输出 schema。不能把 `ok: true` 的排队结果等同于任务完成；必须检查 Job 的终态。
+
+## 微信批量草稿
+
+`wemedia_preview_draft_batch({ scope: "selected", contentRefs })` 接收 1～50 个
+明确的文章引用；`{ scope: "pending" }` 不接受 `contentRefs`，由 Host 读取
+全库当前 `ready` 文章，不依赖 UI 分页。空清单可预览但不能启动，超过上限
+拒绝而非截断。清单区分 `pending`、`skipped`、`blocked`，冻结版本和预检摘要。
+
+用户确认清单后，当前 Agent 调用 `wemedia_start_draft_batch({ intentId })`
+只创建本地持久队列。随后对同一 `batchId` 串行调用
+`wemedia_advance_draft_batch({ batchId })`，每次最多启动一篇文章，仍通过
+单篇 `preview_action/start_action` 服务及该篇的 DSH 原生一次审批。不能用
+PTC 并发推进、单篇替代命令、修改批准字段或另建意图绕开队列状态。
+
+子任务尚在执行时，有限等待后调用 `wemedia_get_draft_batch({ batchId })`；
+只有子任务结束、批次仍为 `running` 且有 `pending` 项时才再次推进。变更的
+版本、审阅、账号或目标不能使用旧清单继续写入。失败项不自动重试；拒绝
+审批、取消或不确定结果停止后续项。仅在当前版本和唯一目标都回读核验后
+该项才标记 `succeeded`，批次 `completed` 不代表每篇成功，更不代表正式发布。
+
+`wemedia_list_draft_batches({})` 可在重开界面后找回结果，
+`wemedia_cancel_draft_batch({ batchId })` 停止待发送项并请求取消现有子任务。
+插件重载后不会自动重发待发送项；先核对既有 Job 与目标，再明确选择新的
+清单。批次私有状态不包含正文或凭据，也不把模型名称作为投递前置条件。
 
 ## 只读平台扩展目录
 

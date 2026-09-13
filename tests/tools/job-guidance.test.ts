@@ -49,6 +49,25 @@ describe("job follow-up guidance", () => {
     for (const value of [null, [], { ok: false, error: { code: "INTENT_CHANGED" } }, { ok: true, value: { status: "running" } }]) expect(jobGuidance("get_job", value)).toBeUndefined();
   });
 
+  it("guides batch preview, serial advance and child observation separately", () => {
+    const batch = (status: string, entries: unknown[] = []) => ({ ok: true, value: { schemaVersion: "wemedia.draft-batch/v1", batchId: "draftbatch:fixture", status, entries } });
+    expect(jobGuidance("preview_draft_batch", { ok: true, value: {} })).toContain("No remote drafts or approvals");
+    expect(jobGuidance("start_draft_batch", batch("running", [{ status: "pending" }]))).toContain("advance_draft_batch once");
+    const active = jobGuidance("get_draft_batch", batch("running", [{ status: "running" }]));
+    expect(active).toContain("15-30 seconds");
+    expect(active).toContain("existing native approval");
+    expect(active).toContain("Never call an alternate create tool");
+    for (const status of ["completed", "stopped"]) {
+      expect(jobGuidance("get_draft_batch", batch(status))).toContain("not necessarily all delivered");
+      expect(jobGuidance("get_draft_batch", batch(status))).toContain("Do not resume or retry");
+    }
+    const cancelled = jobGuidance("cancel_draft_batch", batch("stopped", [{ status: "running" }]));
+    expect(cancelled).toContain("Cancellation is not rollback");
+    expect(cancelled).toContain("Do not advance the queue");
+    expect(jobGuidance("inspect", batch("running"))).toBeUndefined();
+    expect(jobGuidance("get_draft_batch", batch("invented"))).toBeUndefined();
+  });
+
   it("keeps canonical tool JSON first and appends guidance only to model rendering", async () => {
     const answer = job("running");
     const tools = createWorkbenchTools({ request: async () => answer }, { bind: () => ({ caller: { kind: "user" }, dispose() {} }) });

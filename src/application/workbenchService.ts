@@ -1,4 +1,6 @@
 import type { ReferenceLibraryService } from "./referenceLibraryService.ts";
+import { DraftBatchService } from "./draftBatchService.ts";
+import { DRAFT_BATCH_LIMIT, type DraftBatchEntry } from "../domain/draftBatch.ts";
 import type { AccountManagementService } from "./accountManagementService.ts";
 import { getPlatformCatalog } from "../domain/platformCatalog.ts";
 import { SetupService } from "./setupService.ts";
@@ -21,7 +23,7 @@ import type { Clock, IdGenerator } from "../ports/clock.ts";
 import type { WorkbenchAdapter, WorkbenchApprovalProvider, WorkbenchDocuments, WorkbenchHasher, WorkbenchJobs } from "../ports/workbench.ts";
 import type { WorkbenchRemoteResult, WorkflowImportCandidate } from "../ports/workbench.ts";
 import type { QualityGateRunner } from "../ports/quality.ts";
-import type { LedgerRepository } from "../ports/repositories.ts";
+import type { LedgerRepository, WorkbenchStateStore } from "../ports/repositories.ts";
 import { LEDGER_EVENT_SCHEMA_VERSION } from "../domain/ledger.ts";
 import type { LedgerEvent } from "../domain/ledger.ts";
 import type { ContentLibrary } from "../ports/contentLibrary.ts";
@@ -119,18 +121,28 @@ export class WorkbenchService {
   private configurationChanging = false;
   private readonly accounts: AccountManagementService | undefined;
   private readonly references: ReferenceLibraryService | undefined;
+  private readonly draftBatches: DraftBatchService | undefined;
   private readonly lifetime = new AbortController();
   private initialization: Promise<void> | undefined;
   private startupError: string | undefined;
   private recoveryFault: WorkbenchFault | undefined;
   private ledgerEvents: LedgerEvent[] = [];
-  constructor(private readonly options: { documents: WorkbenchDocuments; references?: (canCollect: () => boolean) => ReferenceLibraryService; accounts?: (canLogin: () => boolean) => AccountManagementService; channelPublishing?: (generationId: string, canStart: () => boolean) => ChannelPublishingService; setup?: SetupPort; mappings?: ContentMappings; library?: ContentLibrary; publicationDrafts?: PublicationDrafts; notifier?: Notifier; publications?: PublicationReader; jobs: WorkbenchJobs; adapter: WorkbenchAdapter; approvals: WorkbenchApprovalProvider; clock: Clock; ids: IdGenerator; hasher: WorkbenchHasher; quality?: QualityGateRunner; ledger?: LedgerRepository }) {
+  constructor(private readonly options: { documents: WorkbenchDocuments; draftBatchStore?: WorkbenchStateStore; references?: (canCollect: () => boolean) => ReferenceLibraryService; accounts?: (canLogin: () => boolean) => AccountManagementService; channelPublishing?: (generationId: string, canStart: () => boolean) => ChannelPublishingService; setup?: SetupPort; mappings?: ContentMappings; library?: ContentLibrary; publicationDrafts?: PublicationDrafts; notifier?: Notifier; publications?: PublicationReader; jobs: WorkbenchJobs; adapter: WorkbenchAdapter; approvals: WorkbenchApprovalProvider; clock: Clock; ids: IdGenerator; hasher: WorkbenchHasher; quality?: QualityGateRunner; ledger?: LedgerRepository }) {
     this.generationId = options.ids.opaqueId("generation");
     this.channelService = options.channelPublishing?.(this.generationId, () => !this.stopped && !this.configurationChanging && !this.contentLocks.size && !this.accounts?.busy() && !this.references?.busy());
     this.accounts = options.accounts?.(() => !this.stopped && !this.configurationChanging && !this.contentLocks.size && !this.channelService?.busy() && !this.references?.busy());
     this.references = options.references?.(() => !this.stopped && !this.configurationChanging && !this.contentLocks.size && !this.channelService?.busy() && !this.accounts?.busy());
     this.setupService = options.setup ? new SetupService({ setup: options.setup, generationId: this.generationId, clock: options.clock, ids: options.ids, hasher: options.hasher }) : undefined;
     this.mappingService = options.mappings ? new ContentMappingService({ mappings: options.mappings, generationId: this.generationId, clock: options.clock, ids: options.ids, hasher: options.hasher }) : undefined;
+    this.draftBatches = options.draftBatchStore ? new DraftBatchService({
+      generationId: this.generationId, store: options.draftBatchStore, clock: options.clock, ids: options.ids,
+      candidates: (scope, refs, signal) => this.draftBatchCandidates(scope, refs, signal),
+      preview: (entry, signal) => this.previewAction({ operation: "preview_action", contentRef: entry.contentRef, action: "create_draft" }, signal),
+      start: (intentId, caller, signal) => this.startAction(intentId, caller, signal),
+      jobs: () => [...this.jobs.values()].map(job => ({ ...job })),
+      cancelJob: jobId => this.cancelJob(jobId),
+      inspect: contentRef => options.documents.read(contentRef),
+    }) : undefined;
   }
   initialize(): Promise<void> {
     return this.initialization ??= this.initializeOnce();
@@ -268,6 +280,10 @@ export class WorkbenchService {
   }
   private async dispatch(request: WorkbenchRequest, caller: WorkbenchCaller, signal: AbortSignal): Promise<WorkbenchValue> {
     switch (request.operation) {
+      case "preview_draft_batch": case "start_draft_batch": case "advance_draft_batch": case "get_draft_batch": case "cancel_draft_batch": case "list_draft_batches": {
+        if (!this.draftBatches) throw new WorkbenchFault("DRAFT_BATCH_UNAVAILABLE", "批量草稿需要先配置工作台数据目录");
+        return this.draftBatches.request(request, caller, signal);
+      }
       case "reference_list": case "reference_read": case "reference_collect": case "reference_brief": {
         if (!this.references) throw new WorkbenchFault("REFERENCE_UNAVAILABLE", "参考库需要先配置工作台数据目录");
         return this.references.request(request, signal);
@@ -392,17 +408,9 @@ export class WorkbenchService {
         finally { this.contentLocks.delete(request.contentRef); }
       }
       case "preview_action": return this.previewAction(request, signal);
-      case "start_action":
-        if (this.references?.busy()) throw new WorkbenchFault("REFERENCE_BUSY", "请先结束采集，再执行内容操作");
-        if (this.accounts?.busy()) throw new WorkbenchFault("ACCOUNT_BUSY", "请先完成账号登录，或等待仍有效的小红书二维码到期，再执行内容操作");
-        return this.startAction(request.intentId, caller, signal);
+      case "start_action": return this.startAction(request.intentId, caller, signal);
       case "get_job": return request.jobId.startsWith("channeljob:") && this.channelService ? this.channelService.getJob(request.jobId) : { ...this.job(request.jobId) };
-      case "cancel_job": {
-        if (request.jobId.startsWith("channeljob:") && this.channelService) return this.channelService.cancel(request.jobId);
-        const job = this.job(request.jobId);
-        this.controllers.get(job.jobId)?.abort();
-        return { ...job, safeMessage: TERMINAL.has(job.status) ? job.safeMessage : "取消已请求，正在确认进程结束" };
-      }
+      case "cancel_job": return this.cancelJob(request.jobId);
       case "create_content": {
         const metadata = decodeArticleMetadata({ articleId: "pending", title: request.title, kind: request.kind, sourceUrl: request.sourceUrl, pdfUrl: "", codeUrl: "", author: "", digest: "", titlePrefix: "" });
         if (request.applyIntentId) {
@@ -419,6 +427,60 @@ export class WorkbenchService {
         return { intent, summary: ["仅写入独立的新文章目录", "不会创建公众号草稿或正式发布"] };
       }
     }
+  }
+  private async cancelJob(jobId: string): Promise<WorkbenchJob> {
+    if (jobId.startsWith("channeljob:") && this.channelService) return this.channelService.cancel(jobId);
+    const job = this.job(jobId);
+    this.controllers.get(job.jobId)?.abort();
+    return { ...job, safeMessage: TERMINAL.has(job.status) ? job.safeMessage : "取消已请求，正在确认进程结束" };
+  }
+  private async draftBatchCandidates(scope: "selected" | "pending", refs: ContentRef[] | undefined, signal: AbortSignal): Promise<DraftBatchEntry[]> {
+    const catalog = await this.options.documents.list();
+    const selected = scope === "pending" ? catalog.filter(item => item.status === "ready").map(item => item.contentRef) : refs ?? [];
+    if (selected.length > DRAFT_BATCH_LIMIT) throw new WorkbenchFault("DRAFT_BATCH_LIMIT", "待发送文章超过 50 篇，请分批勾选发送；未截断清单");
+    const entries: DraftBatchEntry[] = [];
+    for (const contentRef of selected) {
+      if (signal.aborted) throw new WorkbenchFault("REQUEST_CANCELLED", "批量预览已取消");
+      const entry: DraftBatchEntry = { contentRef, title: catalog.find(item => item.contentRef === contentRef)?.title ?? "无法读取的文章", revisionDigest: null, inputDigest: null, status: "blocked", code: "CONTENT_UNAVAILABLE", safeMessage: "内容无法读取或不是公众号文章", jobId: null, intentId: null, targetRef: null };
+      try {
+        const document = await this.options.documents.read(contentRef);
+        entry.title = document.metadata.title; entry.revisionDigest = document.revisionDigest;
+        const currentTargets = document.targets.filter(target => target.verifiedRevision === document.revisionDigest);
+        if (currentTargets.length === 1 && document.targets.length === 1) {
+          entry.status = "skipped"; entry.code = "DRAFT_ALREADY_VERIFIED"; entry.safeMessage = "当前版本已在草稿箱，跳过重复创建"; entry.targetRef = currentTargets[0]!.targetRef;
+        } else if (document.targets.length) {
+          entry.code = "DRAFT_TARGET_EXISTS"; entry.safeMessage = "已有草稿绑定，请先核对或使用单篇更新；不会另建草稿";
+        } else if (document.publications?.some(record => record.channel === "wechat" && ["draft_readback", "local_receipt", "remote_readback"].includes(record.evidence))) {
+          entry.code = "PUBLICATION_RECHECK_REQUIRED"; entry.safeMessage = "已有微信投递记录，请先核对目标；不会重复创建";
+        } else if ([...this.jobs.values()].some(job => job.contentRef === contentRef && (!TERMINAL.has(job.status) || job.status === "reconcile_required"))) {
+          entry.code = "CONTENT_BUSY_OR_UNCONFIRMED"; entry.safeMessage = "已有执行中或结果待核对的任务";
+        } else if (this.recoveryFault) {
+          entry.code = this.recoveryFault.code; entry.safeMessage = this.recoveryFault.safeMessage;
+        } else if (!this.options.documents.settings().hasDataDir) {
+          entry.code = "DATA_DIR_REQUIRED"; entry.safeMessage = "缺少持久任务目录，不能批量投递";
+        } else {
+          const preview = await this.previewAction({ operation: "preview_action", contentRef, action: "create_draft" }, signal);
+          entry.inputDigest = preview.intent.inputDigest;
+          const available = this.capabilities.some(report => report.channel === "wechat" && report.actions.some(action => action.action === "draft" && ["ready", "approval_required"].includes(action.status)));
+          if (preview.intent.artifactDigest !== document.revisionDigest) {
+            entry.code = "INTENT_CHANGED"; entry.safeMessage = "检查期间文章已变化，请重新预览";
+          } else if (preview.intent.blockingGateCodes.length) {
+            entry.code = preview.intent.blockingGateCodes[0]!;
+            entry.safeMessage = preview.gates.issues.filter(issue => issue.status === "block").map(issue => issue.safeMessage).join("；").slice(0, 1000) || "账号或当前修订未通过草稿预检";
+          } else if (!available) {
+            entry.code = "CHANNEL_UNAVAILABLE"; entry.safeMessage = "当前公众号草稿能力不可用";
+          } else {
+            entry.status = "pending"; entry.code = "DRAFT_READY"; entry.safeMessage = "当前版本可创建公众号草稿，执行时仍需原生审批";
+          }
+        }
+      } catch (error) {
+        entry.code = error instanceof WorkbenchFault ? error.code : "CONTENT_UNAVAILABLE";
+        entry.safeMessage = error instanceof WorkbenchFault ? error.safeMessage : "内容无法读取或不是公众号文章";
+      }
+      entries.push(entry);
+    }
+    if (signal.aborted) throw new WorkbenchFault("REQUEST_CANCELLED", "批量预览已取消");
+    return entries;
   }
   private async batchPreflight(request: BatchPreflightRequest, signal: AbortSignal): Promise<BatchPreflightResult> {
     const result: BatchPreflightResult = { schemaVersion: "wemedia.batch-preflight/v1", results: [], checkedAt: this.options.clock.nowIso(), cancelled: false };
@@ -515,7 +577,7 @@ export class WorkbenchService {
   }
   private stamp(document: ArticleDocument, action: WorkbenchAction, target: DraftTarget | null, gates: GateReport, edit?: ArticleEdit, editAssets?: ArticleDocument["assets"]): string {
     const capabilities = usesAdapter(action) ? this.capabilities.map(report => ({ channel: report.channel, adapter: report.adapter, adapterVersion: report.adapterVersion ?? null, configured: report.configured, actions: report.actions.map(value => ({ action: value.action, status: value.status, reasonCode: value.reasonCode })) })) : [];
-    return this.options.hasher.digest(JSON.stringify({ capabilities, generation: this.generationId, action, contentRef: document.contentRef, revision: document.revisionDigest, markdown: document.markdown, editAssets: editAssets ?? [], metadata: document.metadata, document: document.document, reviews: document.reviews, target, gates, account: usesAdapter(action) ? this.options.adapter.accountRef() ?? null : null, edit: edit ?? null }));
+    return this.options.hasher.digest(JSON.stringify({ capabilities, generation: this.generationId, action, contentRef: document.contentRef, revision: document.revisionDigest, markdown: document.markdown, editAssets: editAssets ?? [], metadata: document.metadata, document: document.document, reviews: document.reviews, target, creationTargets: action === "create_draft" ? document.targets : [], gates, account: usesAdapter(action) ? this.options.adapter.accountRef() ?? null : null, edit: edit ?? null }));
   }
   private newIntent(contentRef: ContentRef, action: SavedIntent["action"] | "import_review" | "import_draft", inputDigest: string, targetSummary: string, blocks: string[]): ActionIntent {
     return { intentId: this.options.ids.opaqueId("intent"), generationId: this.generationId, contentRef, channel: "wechat", action, sideEffect: action === "sync" ? "read" : isRemoteWrite(action) ? "remote_draft" : "local_write", targetSummary, inputDigest, expectedChanges: [targetSummary], blockingGateCodes: blocks, expiresAt: new Date(Date.parse(this.options.clock.nowIso()) + 10 * 60_000).toISOString(), approved: false };
@@ -603,6 +665,7 @@ export class WorkbenchService {
     if ((action === "update_draft" || action === "sync") && !target) throw new WorkbenchFault("TARGET_REQUIRED", "请明确选择已绑定的公众号草稿");
     const gates = await this.gates(document, signal);
     const blocking = isRemoteWrite(action) ? gates.issues.filter(issue => issue.status === "block").map(issue => issue.code) : [];
+    if (action === "create_draft" && document.targets.length) blocking.push("DRAFT_TARGET_EXISTS");
     if (usesAdapter(action) && !this.options.adapter.accountRef()) blocking.push("WECHAT_ACCOUNT_UNAVAILABLE");
     if (!usesAdapter(action) && !this.options.documents.settings().hasWriteRoot) blocking.push("WRITE_ROOT_MISSING");
     const summary = action === "save_revision" ? "保存独立新版本，不改写原始文件" : action === "prepare" ? "复制当前文章与图片到受控写入目录" : action === "create_draft" ? "创建新的公众号草稿；不正式发布" : action === "update_draft" ? `更新指定草稿：${target!.title}；不正式发布` : `只读核对指定草稿：${target!.title}`;
@@ -613,6 +676,7 @@ export class WorkbenchService {
     return { intent, action, gates, target, summary: [summary, ...(isRemoteWrite(action) ? ["将请求 DSH 原生审批，账户权限以实际 API 返回为准"] : action === "sync" ? ["只读核对远端草稿，不触发创建、更新或写入审批"] : ["旧版审阅可能失效，需重新检查当前版本"])] };
   }
   intentTask(intentId: string): string {
+    if (intentId.startsWith("batchintent:") && this.draftBatches) return this.draftBatches.task(intentId);
     if (intentId.startsWith("channelintent:") && this.channelService) return this.channelService.task(intentId);
     const saved = this.validIntent(intentId);
     return `请执行用户在 WeMedia 工作台预览的操作。先调用 wemedia_start_action，参数 intentId=${JSON.stringify(saved.intent.intentId)}。该意图绑定 contentRef=${JSON.stringify(saved.intent.contentRef)}、输入摘要=${JSON.stringify(saved.intent.inputDigest)}。必须遵守原生审批结果；若意图过期、版本变化或校验阻断，停止并说明，不自行新建替代意图或重试远端创建。已授权操作启动后不要停止：先等待一个有限间隔，再用 wemedia_get_job 查询；按返回状态以适度间隔重复，避免忙轮询，直到 succeeded、failed、cancelled、timed_out 或 reconcile_required 等终态。queued/running 都不是完成，running 也不是等待审批；只有 waiting_user 才等待 DSH 原生审批，审批后继续查询。succeeded 仍须核对 resultCode、目标和当前内容版本，不等同于已正式发布；failed、timed_out、reconcile_required 或 cancelled 只做结果核对，不要盲目重试、重复创建或自行新建替代意图。`;
@@ -657,6 +721,7 @@ export class WorkbenchService {
     }
     if (saved.action === "create_content") return;
     const document = await this.options.documents.read(saved.intent.contentRef);
+    if (saved.action === "create_draft" && document.targets.length) throw new WorkbenchFault("DRAFT_TARGET_EXISTS", "已有草稿绑定，请核对现有草稿；禁止重复创建");
     if (usesAdapter(saved.action)) this.capabilities = [await this.options.adapter.discover(signal)];
     const target = saved.target ? document.targets.find(value => value.targetRef === saved.target?.targetRef) ?? null : null;
     const report = await this.gates(document, signal);
@@ -665,6 +730,8 @@ export class WorkbenchService {
     return document;
   }
   private async startAction(id: string, caller: WorkbenchCaller, signal: AbortSignal): Promise<WorkbenchJob> {
+    if (this.references?.busy()) throw new WorkbenchFault("REFERENCE_BUSY", "请先结束采集，再执行内容操作");
+    if (this.accounts?.busy()) throw new WorkbenchFault("ACCOUNT_BUSY", "请先完成账号登录，或等待仍有效的小红书二维码到期，再执行内容操作");
     if (this.channelService?.busy()) throw new WorkbenchFault("CONTENT_BUSY", "渠道操作尚未结束，请稍后修改内容");
     if (this.configurationChanging) throw new WorkbenchFault("CONTENT_BUSY", "目录或来源关联正在变更，请稍后操作");
     const saved = this.validIntent(id);
@@ -810,6 +877,7 @@ export class WorkbenchService {
   async dispose(): Promise<void> {
     this.stopped = true; this.setupService?.dispose(); this.mappingService?.dispose(); this.lifetime.abort(); this.intents.clear(); this.imports.clear();
     this.references?.dispose();
+    this.draftBatches?.dispose();
     await this.accounts?.dispose();
     await this.channelService?.dispose();
     for (const controller of this.controllers.values()) controller.abort();

@@ -15,8 +15,11 @@ import { PUBLISHING_CHANNELS, CHANNEL_ACTIONS } from "./channelPublishing.ts";
 import type { PublishingChannel, ChannelAction } from "./channelPublishing.ts";
 import { ACCOUNT_CHANNELS } from "./accounts.ts";
 import type { AccountChannel } from "./accounts.ts";
+import { decodeDraftBatchRequest } from "./draftBatch.ts";
 
 const fields: Record<WorkbenchRequest["operation"], readonly string[]> = {
+  preview_draft_batch: ["scope", "contentRefs"], start_draft_batch: ["intentId"],
+  advance_draft_batch: ["batchId"], get_draft_batch: ["batchId"], cancel_draft_batch: ["batchId"], list_draft_batches: [],
   reference_list: [], reference_read: ["id"], reference_collect: ["kind", "url", "limit"], reference_brief: ["ids", "action", "instruction"],
   account_list: [], account_check: ["channel"], account_login_start: ["channel"], account_login_poll: ["loginId"], account_login_cancel: ["loginId"],
   channel_inspect: ["contentRef"], channel_preflight: ["contentRef", "channel", "online"], channel_preview_action: ["contentRef", "channel", "action", "targetRef", "targetUrl"], channel_start_action: ["intentId"],
@@ -54,6 +57,8 @@ export function decodeWorkbenchRequest(input: unknown): WorkbenchRequest {
     return value as ContentRef;
   };
   switch (operation) {
+    case "preview_draft_batch": case "start_draft_batch": case "advance_draft_batch": case "get_draft_batch": case "cancel_draft_batch": case "list_draft_batches":
+      return decodeDraftBatchRequest(input);
     case "reference_list": return { operation };
     case "reference_read": {
       if (typeof input.id !== "string" || !/^ref:[a-f0-9]{32}$/u.test(input.id)) invalid();

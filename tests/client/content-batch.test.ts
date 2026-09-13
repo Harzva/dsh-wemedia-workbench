@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { LibraryItem, LibraryPage } from "../../src/domain/contentLibrary.ts";
 import type { BatchPreflightResult } from "../../src/domain/batchPreflight.ts";
-import { ContentLibraryController, type ContentLibraryRequestFn } from "../../src/client/content-library-controller.ts";
+import { CONTENT_PREFLIGHT_LIMIT, CONTENT_SELECTION_LIMIT, ContentLibraryController, type ContentLibraryRequestFn } from "../../src/client/content-library-controller.ts";
 import { ContentLibrarySidebar } from "../../src/client/content-library.tsx";
 import { ContentBatchResults } from "../../src/client/content-batch.tsx";
 
@@ -27,12 +27,21 @@ describe("Channel and timestamp basis filters", () => {
 });
 
 describe("Read-only batch preflight", () => {
-  it("only permits executable article/publication refs and caps independent selection at twenty", () => {
+  it("only permits executable article/publication refs and caps independent selection at fifty", () => {
     const f = setup(); f.controller.toggleChecked({ ...item(), contentRef: null }, true); expect(f.controller.getSnapshot().checked).toHaveLength(0);
-    for (let number = 1; number <= 21; number++) f.controller.toggleChecked(item(number), true);
-    expect(f.controller.getSnapshot().checked).toHaveLength(20); expect(f.request).not.toHaveBeenCalled();
+    for (let number = 1; number <= CONTENT_SELECTION_LIMIT + 1; number++) f.controller.toggleChecked(item(number), true);
+    expect(f.controller.getSnapshot().checked).toHaveLength(CONTENT_SELECTION_LIMIT); expect(f.request).not.toHaveBeenCalled();
     f.controller.toggleChecked(item(1), false); f.controller.toggleChecked({ ...item(21), contentRef: null, publicationRef: item(21).contentRef! }, true);
     expect(f.controller.getSnapshot().checked.at(-1)?.contentRef).toBe(item(21).contentRef); expect(f.controller.getSnapshot().selected).toBeNull(); f.controller.dispose();
+  });
+
+  it("keeps the 20-item read-only preflight guard separate from the 50-item send selection", async () => {
+    const f = setup(); for (let number = 1; number <= CONTENT_PREFLIGHT_LIMIT + 1; number++) f.controller.toggleChecked(item(number), true);
+    await f.controller.runBatchPreflight();
+    expect(f.request).not.toHaveBeenCalled();
+    expect(f.controller.getSnapshot().batchError).toContain(`最多支持 ${CONTENT_PREFLIGHT_LIMIT}`);
+    expect(f.controller.getSnapshot().checked).toHaveLength(CONTENT_PREFLIGHT_LIMIT + 1);
+    f.controller.dispose();
   });
 
   it("preserves checked refs across filters and clear-filters, then issues only a read operation", async () => {

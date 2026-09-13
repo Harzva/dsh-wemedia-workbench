@@ -3,13 +3,14 @@ import type { ReactNode } from "react";
 import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { LibraryItem } from "../domain/contentLibrary.ts";
 import type { ContentRef } from "../domain/primitives.ts";
-import { contentCategory, contentFilterCount, type ContentLibraryCategory, type ContentLibraryDatePreset, type ContentLibraryPublicationStatus, type ContentLibraryState, type ContentLibraryController } from "./content-library-controller.ts";
+import { CONTENT_SELECTION_LIMIT, contentCategory, contentFilterCount, type ContentLibraryCategory, type ContentLibraryDatePreset, type ContentLibraryPublicationStatus, type ContentLibraryState, type ContentLibraryController } from "./content-library-controller.ts";
 import { contentLibraryStyles } from "./content-library-styles.ts";
 import { inertPreview } from "./preview.ts";
 import { PublicationBadge, PublicationStatusPanel, publicationStatusLabel, publicationStyles, publicationChannelLabel } from "./publication.tsx";
 import { ArticleTaxonomyChips, articleCategoryLabel, taxonomyStyles } from "./taxonomy.tsx";
 import { ContentBatchBar, contentBatchStyles } from "./content-batch.tsx";
 import type { Channel } from "../domain/primitives.ts";
+import type { DraftBatchScope, WorkbenchController } from "./controller.ts";
 
 export { ContentLibraryController } from "./content-library-controller.ts";
 export type { ContentLibraryState, ContentLibraryRequest, ContentLibraryRequestFn } from "./content-library-controller.ts";
@@ -39,13 +40,16 @@ function ContentIcon({ kind }: { kind?: LibraryItem["kind"] | "search" }): React
 
 export interface ContentLibrarySidebarProps {
   controller: ContentLibraryController;
+  workbench?: WorkbenchController;
   onSelect?: ((item: LibraryItem, select: () => void) => void) | undefined;
   onCreateArticle?: (() => void) | undefined;
+  onDraftBatch?: ((scope: DraftBatchScope, contentRefs?: ContentRef[]) => void) | undefined;
 }
 
-export function ContentLibrarySidebar({ controller, onSelect, onCreateArticle }: ContentLibrarySidebarProps): ReactNode {
+export function ContentLibrarySidebar({ controller, workbench, onSelect, onCreateArticle, onDraftBatch }: ContentLibrarySidebarProps): ReactNode {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [query, setQuery] = useState(state.query);
+  const [draftBatchOpen, setDraftBatchOpen] = useState(false);
   const filterCount = contentFilterCount(state);
   const timeLabel = state.timeField === "created" ? "创建" : state.timeField === "published" ? "发布" : "更新";
   useEffect(() => setQuery(state.query), [state.query]);
@@ -54,8 +58,9 @@ export function ContentLibrarySidebar({ controller, onSelect, onCreateArticle }:
     const timer = setTimeout(() => { void controller.search(query); }, 200);
     return () => clearTimeout(timer);
   }, [controller, query, state.query]);
+  const launchDraftBatch = (scope: DraftBatchScope, refs?: ContentRef[]): void => { setDraftBatchOpen(true); if (workbench) void workbench.listDraftBatches(); onDraftBatch?.(scope, refs); };
   return <aside className="wm-content wm-content-sidebar" aria-label="内容库"><style>{contentLibraryStyles}{publicationStyles}{taxonomyStyles}{contentBatchStyles}</style>
-    <header className="wm-content-sidehead"><h2>内容<span className="wm-content-count">{state.total}</span></h2><div className="wm-content-actions"><Button variant="toolbar" size="sm" aria-label="刷新内容库" title="重新发现本地内容" disabled={!state.connected || state.listLoading} onClick={() => { void controller.refresh(); }}>↻</Button>{onCreateArticle && <Button variant="toolbar" size="sm" aria-label="新建内容" title="新建文章、视频或图文" onClick={onCreateArticle}>＋</Button>}</div></header>
+    <header className="wm-content-sidehead"><h2>内容<span className="wm-content-count">{state.total}</span></h2><div className="wm-content-actions"><Button variant="toolbar" size="sm" aria-label="刷新内容库" title="重新发现本地内容" disabled={!state.connected || state.listLoading} onClick={() => { void controller.refresh(); }}>↻</Button>{workbench && onDraftBatch && <Button size="sm" variant="outline" aria-label="发送待发送文章" title="预览当前所有待发送文章" disabled={!state.connected || workbench.dirty} onClick={() => launchDraftBatch("pending")}>发送待发送文章</Button>}{onCreateArticle && <Button variant="toolbar" size="sm" aria-label="新建内容" title="新建文章、视频或图文" onClick={onCreateArticle}>＋</Button>}</div></header>
     <nav className="wm-content-filters" aria-label="发布类型与图像素材">{kinds.map(([kind, label]) => <button key={kind} type="button" title={kind === "image" ? "图像素材" : kind === "image_text" ? "图文作品" : label} aria-pressed={contentCategory(state) === kind} onClick={() => { void controller.setCategory(kind); }}>{label}</button>)}</nav>
     <form className="wm-content-search" role="search" onSubmit={event => { event.preventDefault(); void controller.search(query); }}><ContentIcon kind="search" /><input aria-label="搜索内容" placeholder="搜索内容…" value={query} onChange={event => setQuery(event.target.value)} /></form>
     <label className="wm-content-categoryfield"><span>文章分类</span><select aria-label="文章分类" value={state.category} onChange={event => { void controller.setArticleCategory(event.target.value as ContentLibraryState["category"]); }}><option value="all">全部分类</option>{state.facets.categories.map(facet => <option key={facet.value} value={facet.value}>{articleCategoryLabel(facet.value)} · {facet.count}</option>)}{state.category !== "all" && !state.facets.categories.some(facet => facet.value === state.category) && <option value={state.category}>{articleCategoryLabel(state.category)}（当前筛选）</option>}</select></label>
@@ -74,11 +79,11 @@ export function ContentLibrarySidebar({ controller, onSelect, onCreateArticle }:
       <p className="wm-content-filterhint">日期按本地时区筛选{timeLabel}时间，缺少对应时间的内容不匹配日期范围。</p>
     </div></details>{(filterCount > 0 || state.sort !== "updated_desc" || state.timeField !== "updated" || state.filterError) && <button className="wm-content-clearfilters" type="button" onClick={() => { setQuery(""); void controller.clearFilters(); }}>清空筛选</button>}</div>
     <div className="wm-content-list" aria-label="内容列表" aria-busy={state.listLoading}>
-      {state.items.map(item => <div className="wm-content-itemrow" key={item.itemId}>{(item.publicationRef || item.contentRef) && <input type="checkbox" className="wm-content-itemcheck" aria-label={`勾选检查：${item.title}`} checked={state.checked.some(value => value.contentRef === (item.publicationRef ?? item.contentRef))} disabled={state.checked.length >= 20 && !state.checked.some(value => value.contentRef === (item.publicationRef ?? item.contentRef))} onChange={event => controller.toggleChecked(item, event.target.checked)} />}<button className="wm-content-item" aria-current={state.selected === item.itemId ? "true" : undefined} onClick={() => { const select = (): void => { void controller.select(item.itemId); }; if (onSelect) onSelect(item, select); else select(); }}><span className="wm-content-thumb" data-kind={item.kind}>{item.kind === "image" && item.itemId === state.selected && state.mediaUrl ? <img src={state.mediaUrl} alt="" /> : <ContentIcon kind={item.kind} />}</span><span className="wm-content-itemcopy"><span className="wm-content-itemtitle">{item.title || "未命名内容"}</span><span className="wm-content-itemmeta"><span className="wm-content-type">{contentPublicationLabel(item)}</span>{item.kind === "image" ? <span>{contentBytesLabel(item.bytes) || "本地文件"}</span> : <PublicationBadge status={item.publicationStatus} />}{item.readOnly && (item.kind === "article" || !!item.publicationRef) && <span>{item.legacyReadOnly ? "旧稿只读" : "只读"}</span>}</span>{item.publicationType === "article" && <ArticleTaxonomyChips taxonomy={item.taxonomy} compact />}<span className="wm-content-itemmeta" title={item.rootLabel}><span>{contentUpdatedLabel(item.updatedAt)}</span></span></span></button></div>)}
+      {state.items.map(item => <div className="wm-content-itemrow" key={item.itemId}>{(item.publicationRef || item.contentRef) && <input type="checkbox" className="wm-content-itemcheck" aria-label={`勾选检查：${item.title}`} checked={state.checked.some(value => value.contentRef === (item.publicationRef ?? item.contentRef))} disabled={state.checked.length >= CONTENT_SELECTION_LIMIT && !state.checked.some(value => value.contentRef === (item.publicationRef ?? item.contentRef))} onChange={event => controller.toggleChecked(item, event.target.checked)} />}<button className="wm-content-item" aria-current={state.selected === item.itemId ? "true" : undefined} onClick={() => { const select = (): void => { void controller.select(item.itemId); }; if (onSelect) onSelect(item, select); else select(); }}><span className="wm-content-thumb" data-kind={item.kind}>{item.kind === "image" && item.itemId === state.selected && state.mediaUrl ? <img src={state.mediaUrl} alt="" /> : <ContentIcon kind={item.kind} />}</span><span className="wm-content-itemcopy"><span className="wm-content-itemtitle">{item.title || "未命名内容"}</span><span className="wm-content-itemmeta"><span className="wm-content-type">{contentPublicationLabel(item)}</span>{item.kind === "image" ? <span>{contentBytesLabel(item.bytes) || "本地文件"}</span> : <PublicationBadge status={item.publicationStatus} />}{item.readOnly && (item.kind === "article" || !!item.publicationRef) && <span>{item.legacyReadOnly ? "旧稿只读" : "只读"}</span>}</span>{item.publicationType === "article" && <ArticleTaxonomyChips taxonomy={item.taxonomy} compact />}<span className="wm-content-itemmeta" title={item.rootLabel}><span>{contentUpdatedLabel(item.updatedAt)}</span></span></span></button></div>)}
       {!state.connected ? <div className="wm-content-listnotice" role="status"><p>正在连接内容服务…</p></div> : state.listError ? <div className="wm-content-listnotice" role="alert"><p>{state.listError}</p><Button size="sm" onClick={() => { void controller.refresh(); }}>重试</Button></div> : !state.items.length && !state.listLoading ? <div className="wm-content-listnotice" role="status"><p>{contentEmptyMessage(state)}</p>{!filterCount && onCreateArticle && <Button size="sm" onClick={onCreateArticle}>新建内容</Button>}</div> : null}
       {state.listLoading && <div className="wm-content-listnotice" role="status"><p>正在读取内容…</p><Button size="sm" variant="toolbar" onClick={() => controller.cancelSearch()}>取消</Button></div>}
       {state.nextCursor && !state.listLoading && <div className="wm-content-listfooter"><Button size="sm" variant="toolbar" onClick={() => { void controller.loadMore(); }}>加载更多</Button></div>}
-    </div><ContentBatchBar controller={controller} />{!!state.issues.length && <details className="wm-content-listnote"><summary>内容目录提示 · {state.issues.length}</summary><ul>{state.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></details>}<p className="wm-content-listnote">{state.truncated ? "部分内容" : "本地内容"} · {state.items.length}{state.total > state.items.length ? ` / ${state.total}` : ""} 项{state.truncated ? " · 扫描达到上限" : ""}</p>
+    </div><ContentBatchBar controller={controller} workbench={workbench} draftOpen={draftBatchOpen} onDraftOpenChange={setDraftBatchOpen} onDraftBatch={(scope, refs) => launchDraftBatch(scope, refs)} />{!!state.issues.length && <details className="wm-content-listnote"><summary>内容目录提示 · {state.issues.length}</summary><ul>{state.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></details>}<p className="wm-content-listnote">{state.truncated ? "部分内容" : "本地内容"} · {state.items.length}{state.total > state.items.length ? ` / ${state.total}` : ""} 项{state.truncated ? " · 扫描达到上限" : ""}</p>
   </aside>;
 }
 

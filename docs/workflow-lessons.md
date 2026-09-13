@@ -4,7 +4,7 @@ These are reusable execution rules, not a delivery record for any private batch.
 
 ## Current programmable surface
 
-The workbench exposes 45 native DSH tools and the same typed tools through DSH
+The workbench exposes 51 native DSH tools and the same typed tools through DSH
 PTC. UI RPC and model tools share `WorkbenchService`. There is no standalone
 workbench executable or package `bin` entry. Channel adapters use configured,
 controlled external bridge processes; those are not a unified workbench CLI.
@@ -14,11 +14,26 @@ A future unified CLI should reuse the service contract, identity, native
 approval, revision checks and job reconciliation. It must not introduce a
 second state store or bypass the host's policy through direct file writes.
 
-The current batch preflight is read-only and sequential. It does not create
+The multi-channel batch preflight is read-only and sequential. It does not create
 intents, jobs or remote drafts, and it is not a persistent batch writer.
 Once local content is frozen, a rolling per-article preflight, native approval,
 write and readback can make delivery progress without waiting for an entire
 batch check. Hold blocked articles explicitly; do not count them as delivered.
+
+The separate WeChat draft-batch coordinator freezes an explicit list of at most
+50 article revisions. Pending scope reads the whole ready-article catalog, not
+the current library page. Its local queue advances one existing native job at a
+time under per-article approval; it is not another adapter or approval engine.
+Persist the child intent before dispatch and recover by that exact intent if
+the batch-to-job association was interrupted. Never infer that an absent job
+ID means no write occurred. A reload stops pending entries rather than silently
+resuming delivery. Cancellation stops the queue, but an in-flight write may
+still require reconciliation. Completed means processed, not all successful.
+
+Draft creation also checks target bindings after preview and after approval.
+Checking only the initial list is insufficient: another operation may bind a
+target during that interval. Existing targets require readback or explicit
+single-article update, not another create operation.
 
 ## Completion is a checked state
 

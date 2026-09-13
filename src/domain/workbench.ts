@@ -199,7 +199,7 @@ export interface TaskBrief extends JsonObject {
   prompt: string;
 }
 
-export type WorkbenchRequest = import("./references.ts").ReferenceRequest | import("./accounts.ts").AccountRequest | import("./channelPublishing.ts").ChannelRequest | PublicationRequest | BatchPreflightRequest
+export type WorkbenchRequest = import("./draftBatch.ts").DraftBatchRequest | import("./references.ts").ReferenceRequest | import("./accounts.ts").AccountRequest | import("./channelPublishing.ts").ChannelRequest | PublicationRequest | BatchPreflightRequest
   | ({ operation: "mapping_inspect" } & MappingInspectInput)
   | { operation: "mapping_preview"; change: MappingChangeInput }
   | { operation: "mapping_apply"; intentId: string }

@@ -1,6 +1,6 @@
 # Adapter 合约
 
-本文描述当前多渠道 adapter 合约。工作台当前注册 45 个 `wemedia_*` 工具；渠道 bridge 由宿主配置并在工作台之外提供，凭据、浏览器/MCP/API 依赖和外部账号状态不随本项目分发。
+本文描述当前多渠道 adapter 合约。工作台当前注册 51 个 `wemedia_*` 工具；渠道 bridge 由宿主配置并在工作台之外提供，凭据、浏览器/MCP/API 依赖和外部账号状态不随本项目分发。
 
 实现以 `src/ports/adapter.ts`、`src/domain/capability.ts`、`src/adapters/contract.ts` 和 `src/ports/channelPublishing.ts` 为准；本文是公开的接口与安全边界说明，不是账号或生产环境验收记录。
 
@@ -120,7 +120,7 @@ Host 导入预览不落盘、不调用草稿接口；意图绑定调用方、运
 
 ### 工具与副作用
 
-工作台当前注册 45 个 `wemedia_*` 工具；以下四项负责多渠道动作。参数中的 `channel` 为 `zhihu | xiaohongshu | x`，`action` 为 `prepare | stage | publish | sync`。
+工作台当前注册 51 个 `wemedia_*` 工具；以下四项负责多渠道动作。参数中的 `channel` 为 `zhihu | xiaohongshu | x`，`action` 为 `prepare | stage | publish | sync`。微信批量草稿另外复用单篇审批与 Job 服务，不更改 adapter 合约。
 
 | 工具/RPC operation | 公开参数 | 行为 |
 | --- | --- | --- |

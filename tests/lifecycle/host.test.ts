@@ -37,7 +37,7 @@ describe("real Cordis Host ownership and cleanup", () => {
     expect(await snapshot(service)).toMatchObject({ settings: { hasWriteRoot: false, hasDataDir: false } });
     await tools(ctx);
     await vi.waitFor(() => { expect(ctx.tools.get("wemedia_snapshot")).toBeDefined(); });
-    expect(ctx.tools.schemas().filter(item => item.name.startsWith("wemedia_"))).toHaveLength(45);
+    expect(ctx.tools.schemas().filter(item => item.name.startsWith("wemedia_"))).toHaveLength(51);
     await mounted.dispose();
     expect(remote(ctx)).toBeUndefined();
     expect(ctx.tools.schemas().filter(item => item.name.startsWith("wemedia_"))).toHaveLength(0);
@@ -53,7 +53,7 @@ describe("real Cordis Host ownership and cleanup", () => {
     await vi.waitFor(async () => { expect(remote(ctx)).toBeDefined(); expect((await snapshot(remote(ctx)!)).generationId).not.toBe(initial.generationId); }, { timeout: 3000 });
     expect((await snapshot(remote(ctx)!)).generationId).not.toBe(initial.generationId);
     expect(await before.request({ operation: "snapshot" }, signal())).toMatchObject({ ok: false, error: { code: "GENERATION_DISPOSED" } });
-    expect(ctx.tools.schemas().filter(item => item.name.startsWith("wemedia_"))).toHaveLength(45);
+    expect(ctx.tools.schemas().filter(item => item.name.startsWith("wemedia_"))).toHaveLength(51);
     await mounted.dispose();
     expect(ctx.settings.describe({ redactSecrets: true }).some(item => item.ns === ns)).toBe(false);
     expect(remote(ctx)).toBeUndefined();

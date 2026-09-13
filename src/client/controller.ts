@@ -9,6 +9,18 @@ import type { WemediaRemote } from "../remote/descriptors.ts";
 import type { MediaPublicationType, PublicationAsset, PublicationDraft, PublicationDraftPreview, PublicationEdit, PublicationRequest } from "../domain/publicationDraft.ts";
 import { publicationEdit } from "../domain/publicationDraft.ts";
 import type { ChannelInspection } from "../domain/channelPublishing.ts";
+import type { JsonObject } from "../domain/json.ts";
+import { DRAFT_BATCH_LIMIT, type DraftBatch as DomainDraftBatch, type DraftBatchEntry as DomainDraftBatchEntry, type DraftBatchEntryStatus as DomainDraftBatchEntryStatus, type DraftBatchPreview as DomainDraftBatchPreview, type DraftBatchScope as DomainDraftBatchScope } from "../domain/draftBatch.ts";
+
+export type DraftBatchScope = DomainDraftBatchScope;
+export type DraftBatchEntryStatus = DomainDraftBatchEntryStatus;
+export type ClientDraftBatchEntry = DomainDraftBatchEntry;
+export type ClientDraftBatchPreview = DomainDraftBatchPreview;
+export type ClientDraftBatch = DomainDraftBatch;
+export interface ClientDraftBatchList extends JsonObject {
+  schemaVersion: "wemedia.draft-batch-list/v1";
+  batches: DomainDraftBatch[];
+}
 
 export type View = "articles" | "references" | "agent" | "jobs" | "accounts" | "platforms" | "settings";
 export type SessionTarget = Pick<SessionFace, "prompt">;
@@ -52,6 +64,11 @@ export interface ClientState {
   publicationPreview: PublicationDraftPreview | null;
   publicationCreation: PublicationDraftPreview | null;
   publicationRevision: number;
+  draftBatchPreview: ClientDraftBatchPreview | null;
+  draftBatches: ClientDraftBatch[];
+  draftBatchPollingPaused: string[];
+  draftBatchHandoffIntentId: string | null;
+  draftBatchError: string | null;
   leaveRequest: LeaveRequest | null;
   notice: { kind: "error" | "info"; text: string; code?: string } | null;
 }
@@ -72,15 +89,22 @@ export function unwrapAnswer(result: RemoteResult<WorkbenchAnswer>): WorkbenchVa
 }
 
 export const terminalJob = (job: WorkbenchJob): boolean => ["succeeded", "failed", "cancelled", "timed_out", "reconcile_required"].includes(job.status);
+const DRAFT_BATCH_POLL_INTERVAL_MS = 5_000;
+const DRAFT_BATCH_POLL_MAX_READS = 36;
+const DRAFT_BATCH_LIST_POLL_INTERVAL_MS = 1_500;
+const DRAFT_BATCH_LIST_POLL_MAX_READS = 6;
 
 /** Browser presentation state only. Execution and durable state remain on Host. */
 export class WorkbenchController {
-  private state: ClientState = { history: null, comparison: null, evidence: null, evidenceRequested: null, open: false, view: "articles", connected: false, query: "", cursors: [], pending: [], snapshot: null, page: null, selected: null, document: null, edit: null, mobile: null, gates: null, actionPreview: null, aiWorkflow: null, workflowImport: null, creation: null, publication: null, publicationEdit: null, publicationAssets: [], publicationPreview: null, publicationCreation: null, publicationRevision: 0, leaveRequest: null, notice: null };
+  private state: ClientState = { history: null, comparison: null, evidence: null, evidenceRequested: null, open: false, view: "articles", connected: false, query: "", cursors: [], pending: [], snapshot: null, page: null, selected: null, document: null, edit: null, mobile: null, gates: null, actionPreview: null, aiWorkflow: null, workflowImport: null, creation: null, publication: null, publicationEdit: null, publicationAssets: [], publicationPreview: null, publicationCreation: null, publicationRevision: 0, draftBatchPreview: null, draftBatches: [], draftBatchPollingPaused: [], draftBatchHandoffIntentId: null, draftBatchError: null, leaveRequest: null, notice: null };
   private listeners = new Set<() => void>();
   private requests = new Map<string, AbortController>();
   private stopped = false;
   private remote: WemediaRemote | undefined;
   private handedOff = new Set<string>();
+  private draftBatchHandedOff = new Set<string>();
+  private draftBatchPolls = new Map<string, { timer: ReturnType<typeof setTimeout>; reads: number }>();
+  private draftBatchListPoll: { timer: ReturnType<typeof setTimeout>; reads: number; after: number } | null = null;
   private submittedEdits = new Map<string, { contentRef: ContentRef; edit: string }>();
   private submittedCreations = new Set<string>();
   private submittedPublications = new Map<string, { contentRef: ContentRef; edit: string | null }>();
@@ -109,6 +133,9 @@ export class WorkbenchController {
       this.abortRequests();
       this.connectionVersion += 1;
       this.retiredGenerations.clear();
+      this.draftBatchHandedOff.clear();
+      this.clearDraftBatchPolls();
+      this.patch({ draftBatchPreview: null, draftBatchPollingPaused: [], draftBatchHandoffIntentId: null, draftBatchError: null });
     }
     this.remote = remote;
     this.patch({ connected: true, pending: [...this.requests.keys()] });
@@ -116,6 +143,7 @@ export class WorkbenchController {
   }
   unavailable(code = "REMOTE_UNAVAILABLE"): void {
     this.abortRequests();
+    this.clearDraftBatchPolls();
     this.connectionVersion += 1;
     this.remote = undefined;
     this.patch({ connected: false, pending: [], notice: { kind: "error", code, text: "工作台服务尚不可用；请检查插件与 Host 连接。" } });
@@ -127,6 +155,7 @@ export class WorkbenchController {
   close(): void {
     this.pendingNavigation = undefined;
     this.abortRequests();
+    this.clearDraftBatchPolls();
     this.patch({ open: false, pending: [], leaveRequest: null, actionPreview: null, creation: null, publicationPreview: null, publicationCreation: null });
   }
   private abortRequests(): void {
@@ -179,6 +208,8 @@ export class WorkbenchController {
     this.listeners.clear();
     this.remote = undefined;
     this.handedOff.clear();
+    this.draftBatchHandedOff.clear();
+    this.clearDraftBatchPolls();
     this.submittedEdits.clear();
     this.submittedCreations.clear();
     this.submittedPublications.clear();
@@ -218,6 +249,227 @@ export class WorkbenchController {
   /** Library UI uses the same strict Host request and error boundary. */
   requestContent<T extends WorkbenchValue>(request: WorkbenchRequest | PublicationRequest, signal: AbortSignal): Promise<T> {
     return this.call<T>(request as WorkbenchRequest, signal);
+  }
+
+  previewDraftBatch(scope: DraftBatchScope, contentRefs?: ContentRef[]): Promise<void> {
+    if (this.stopped || !this.state.connected) {
+      this.patch({ draftBatchError: "工作台服务尚未连接，请恢复连接后重试。" });
+      return Promise.resolve();
+    }
+    const refs = scope === "selected" ? [...(contentRefs ?? [])] : undefined;
+    this.draftBatchHandedOff.clear();
+    this.patch({ draftBatchPreview: null, draftBatchHandoffIntentId: null, draftBatchError: null });
+    if (scope === "selected" && !refs?.length) {
+      this.patch({ draftBatchError: "请先勾选至少一篇文章。" });
+      return Promise.resolve();
+    }
+    if (scope === "selected" && refs && refs.length > DRAFT_BATCH_LIMIT) {
+      this.patch({ draftBatchError: `一次最多发送 ${DRAFT_BATCH_LIMIT} 篇文章，请减少勾选后重试。` });
+      return Promise.resolve();
+    }
+    if (scope === "selected" && refs && new Set(refs).size !== refs.length) {
+      this.patch({ draftBatchError: "所选文章不能重复，请重新勾选后重试。" });
+      return Promise.resolve();
+    }
+    const request: WorkbenchRequest = scope === "selected"
+      ? { operation: "preview_draft_batch", scope, contentRefs: refs as ContentRef[] }
+      : { operation: "preview_draft_batch", scope };
+    return this.run("draft-batch-preview", async signal => {
+      try {
+        const preview = await this.call<ClientDraftBatchPreview>(request, signal);
+        if (preview.schemaVersion !== "wemedia.draft-batch-preview/v1" || preview.scope !== scope || !Array.isArray(preview.entries)) throw new ClientFault("DRAFT_BATCH_INVALID", "批量草稿预览格式无效，请刷新后重试。");
+        if (preview.generationId !== this.state.snapshot?.generationId) throw new ClientFault("DRAFT_BATCH_STALE", "工作台已重新加载，请重新预览批量草稿。");
+        this.patch({ draftBatchPreview: preview, draftBatchError: null });
+      } catch (error) {
+        if (!signal.aborted && !this.stopped) this.patch({ draftBatchError: error instanceof ClientFault ? error.message : "批量草稿预览未完成，请刷新后重试。" });
+        throw error;
+      }
+    }, true);
+  }
+
+  draftBatchHandoffBlocked(intentId: string): string | null {
+    const preview = this.state.draftBatchPreview;
+    if (!preview || !intentId || preview.intentId !== intentId) return "请先完成批量草稿预览。";
+    if (this.dirty) return "当前文章有未保存修改，请先保存或放弃编辑。";
+    if (this.stopped || !this.remote || !this.state.connected) return "工作台服务尚未连接。";
+    if (!this.state.snapshot?.generationId || preview.generationId !== this.state.snapshot.generationId) return "工作台代次已变化，请重新预览。";
+    if (!Number.isFinite(Date.parse(preview.expiresAt)) || Date.parse(preview.expiresAt) <= Date.now()) return "批量草稿预览已过期，请重新预览。";
+    if (!this.currentSession()) return "请先在 DSH 选择当前会话。";
+    if (this.draftBatchHandedOff.has(intentId)) return "该批量草稿意图已交给当前 Agent，请先查看任务状态。";
+    if (this.requests.has(`draft-batch-handoff:${intentId}`)) return "批量草稿正在交给当前 Agent。";
+    if (!preview.eligibleCount) return "没有通过预检的文章可发送。";
+    return null;
+  }
+
+  async handoffDraftBatchIntent(intentId: string): Promise<void> {
+    const preview = this.state.draftBatchPreview;
+    if (!preview || preview.intentId !== intentId) {
+      this.patch({ draftBatchError: "批量草稿预览已变化，请重新预览。" });
+      return;
+    }
+    const blocked = this.draftBatchHandoffBlocked(intentId);
+    if (blocked) { this.patch({ draftBatchError: blocked }); return; }
+    const session = this.currentSession();
+    const remote = this.remote;
+    if (!session || !remote) {
+      this.patch({ draftBatchError: "请先在 DSH 选择当前会话并确认工作台连接。" });
+      return;
+    }
+    const connectionVersion = this.connectionVersion;
+    const handoffStartedAt = Date.now();
+    const key = `draft-batch-handoff:${intentId}`;
+    if (this.requests.has(key)) return;
+    const request = new AbortController();
+    this.requests.set(key, request);
+    this.patch({ pending: [...this.requests.keys()], draftBatchError: null });
+    try {
+      const task = unwrapRemote(await remote.intentTask({ intentId }, request.signal));
+      const currentPreview = this.state.draftBatchPreview;
+      if (request.signal.aborted || this.stopped || !this.state.connected || this.connectionVersion !== connectionVersion || this.currentSession() !== session || this.state.snapshot?.generationId !== preview.generationId || this.dirty || !currentPreview || currentPreview.intentId !== intentId || currentPreview.generationId !== preview.generationId || currentPreview.expiresAt !== preview.expiresAt || !Number.isFinite(Date.parse(currentPreview.expiresAt)) || Date.parse(currentPreview.expiresAt) <= Date.now()) throw new ClientFault("DRAFT_BATCH_STALE", "当前预览、会话、代次或编辑状态已变化，批量草稿未排队；请重新检查。");
+      if (!task.ok || !task.prompt.trim()) throw new ClientFault(task.code, "无法生成批量草稿的 Agent 任务，请重新预览。");
+      // Mark before prompt() so an uncertain/rejected acknowledgement cannot be retried as a duplicate write.
+      this.draftBatchHandedOff.add(intentId);
+      const result = await session.prompt([{ type: "text", text: task.prompt }], "queue", request.signal);
+      if (request.signal.aborted) throw new ClientFault("REQUEST_CANCELLED", "请求已取消；请在当前会话核对批量草稿是否已排队。");
+      if (!result.ok || !result.value.accepted) throw new ClientFault(result.ok ? "PROMPT_NOT_ACCEPTED" : result.error.code, "当前会话未确认接收批量草稿任务；尚不能视为已排队，请先核对会话状态。");
+      this.patch({ draftBatchHandoffIntentId: intentId, draftBatchError: null, notice: { kind: "info", text: "批量草稿任务已交给当前 Agent，尚未执行完成；请在会话中处理逐篇原生审批并查看任务状态。" } });
+      this.watchDraftBatchList(handoffStartedAt);
+    } catch (error) {
+      if (!request.signal.aborted && !this.stopped) this.patch({ draftBatchError: error instanceof ClientFault ? error.message : "批量草稿任务排队结果不确定，请先核对当前会话，不要重复发送。" });
+      throw error;
+    } finally {
+      if (this.requests.get(key) === request) this.requests.delete(key);
+      this.patch({ pending: [...this.requests.keys()] });
+    }
+  }
+
+  listDraftBatches(): Promise<void> {
+    return this.run("draft-batch-list", async signal => {
+      try {
+        const result = await this.call<ClientDraftBatchList>({ operation: "list_draft_batches" }, signal);
+        if (result.schemaVersion !== "wemedia.draft-batch-list/v1" || !Array.isArray(result.batches)) throw new ClientFault("DRAFT_BATCH_INVALID", "批量草稿列表格式无效，请刷新后重试。");
+        this.patch({ draftBatches: result.batches, draftBatchError: null });
+        for (const batch of result.batches) {
+          if (this.draftBatchNeedsPolling(batch)) this.watchDraftBatch(batch.batchId);
+          else { this.unwatchDraftBatch(batch.batchId); this.clearDraftBatchPollingPaused(batch.batchId); }
+        }
+      } catch (error) {
+        if (!signal.aborted && !this.stopped) this.patch({ draftBatchError: error instanceof ClientFault ? error.message : "批量草稿列表暂时无法读取，请重试。" });
+        throw error;
+      }
+    }, true, false);
+  }
+
+  refreshDraftBatch(batchId: string): Promise<void> {
+    return this.run(`draft-batch-read:${batchId}`, async signal => {
+      try {
+        const batch = await this.call<ClientDraftBatch>({ operation: "get_draft_batch", batchId }, signal);
+        if (batch.schemaVersion !== "wemedia.draft-batch/v1" || batch.batchId !== batchId) throw new ClientFault("DRAFT_BATCH_INVALID", "批量草稿任务格式无效，请刷新列表。");
+        this.upsertDraftBatch(batch);
+        if (this.draftBatchNeedsPolling(batch)) this.watchDraftBatch(batchId); else { this.unwatchDraftBatch(batchId); this.clearDraftBatchPollingPaused(batchId); }
+      } catch (error) {
+        if (!signal.aborted && !this.stopped) this.patch({ draftBatchError: error instanceof ClientFault ? error.message : "批量草稿任务状态暂时无法读取，请重试。" });
+        throw error;
+      }
+    }, true, false);
+  }
+
+  cancelDraftBatch(batchId: string): Promise<void> {
+    return this.run(`draft-batch-cancel:${batchId}`, async signal => {
+      try {
+        const batch = await this.call<ClientDraftBatch>({ operation: "cancel_draft_batch", batchId }, signal);
+        if (batch.schemaVersion !== "wemedia.draft-batch/v1" || batch.batchId !== batchId) throw new ClientFault("DRAFT_BATCH_INVALID", "批量草稿任务格式无效，请刷新列表。");
+        this.upsertDraftBatch(batch);
+        if (this.draftBatchNeedsPolling(batch)) this.watchDraftBatch(batchId); else { this.unwatchDraftBatch(batchId); this.clearDraftBatchPollingPaused(batchId); }
+        this.patch({ draftBatchError: null, notice: { kind: "info", text: "批量草稿停止请求已发送；请刷新确认每篇任务的最终状态。" } });
+      } catch (error) {
+        if (!signal.aborted && !this.stopped) this.patch({ draftBatchError: error instanceof ClientFault ? error.message : "批量草稿停止请求未完成，请刷新核对。" });
+        throw error;
+      }
+    }, true, false);
+  }
+
+  watchDraftBatch(batchId: string): void {
+    if (this.stopped || this.draftBatchPolls.has(batchId)) return;
+    this.clearDraftBatchPollingPaused(batchId);
+    const tick = (): void => {
+      const current = this.draftBatchPolls.get(batchId);
+      if (!current || this.stopped || !this.state.connected) { this.unwatchDraftBatch(batchId); return; }
+      if (current.reads >= DRAFT_BATCH_POLL_MAX_READS) { this.pauseDraftBatchPolling(batchId); this.unwatchDraftBatch(batchId); return; }
+      current.reads += 1;
+      void this.refreshDraftBatch(batchId).finally(() => {
+        const next = this.draftBatchPolls.get(batchId);
+        const batch = this.state.draftBatches.find(value => value.batchId === batchId);
+        if (!next || !batch || !this.draftBatchNeedsPolling(batch)) { this.unwatchDraftBatch(batchId); return; }
+        if (next.reads >= DRAFT_BATCH_POLL_MAX_READS) { this.pauseDraftBatchPolling(batchId); this.unwatchDraftBatch(batchId); return; }
+        next.timer = setTimeout(tick, DRAFT_BATCH_POLL_INTERVAL_MS);
+      });
+    };
+    const timer = setTimeout(tick, 1200);
+    this.draftBatchPolls.set(batchId, { timer, reads: 0 });
+  }
+
+  private watchDraftBatchList(after: number): void {
+    this.clearDraftBatchListPoll();
+    const poll = { timer: setTimeout(() => undefined, 0), reads: 0, after };
+    const tick = (): void => {
+      if (this.draftBatchListPoll !== poll || this.stopped || !this.state.connected || poll.reads >= DRAFT_BATCH_LIST_POLL_MAX_READS) {
+        if (this.draftBatchListPoll === poll) this.clearDraftBatchListPoll();
+        return;
+      }
+      poll.reads += 1;
+      void this.listDraftBatches().finally(() => {
+        if (this.draftBatchListPoll !== poll) return;
+        const hasFreshBatch = this.state.draftBatches.some(batch => {
+          const createdAt = Date.parse(batch.createdAt);
+          return Number.isFinite(createdAt) && createdAt >= poll.after;
+        });
+        if (hasFreshBatch || poll.reads >= DRAFT_BATCH_LIST_POLL_MAX_READS || this.stopped || !this.state.connected) {
+          this.clearDraftBatchListPoll();
+          return;
+        }
+        poll.timer = setTimeout(tick, DRAFT_BATCH_LIST_POLL_INTERVAL_MS);
+      });
+    };
+    poll.timer = setTimeout(tick, 500);
+    this.draftBatchListPoll = poll;
+  }
+
+  private draftBatchNeedsPolling(batch: ClientDraftBatch): boolean {
+    return batch.status === "running" || batch.entries.some(entry => entry.status === "pending" || entry.status === "running");
+  }
+
+  private pauseDraftBatchPolling(batchId: string): void {
+    if (this.state.draftBatchPollingPaused.includes(batchId)) return;
+    this.patch({ draftBatchPollingPaused: [...this.state.draftBatchPollingPaused, batchId] });
+  }
+
+  private clearDraftBatchPollingPaused(batchId: string): void {
+    if (!this.state.draftBatchPollingPaused.includes(batchId)) return;
+    this.patch({ draftBatchPollingPaused: this.state.draftBatchPollingPaused.filter(value => value !== batchId) });
+  }
+
+  private clearDraftBatchListPoll(): void {
+    if (!this.draftBatchListPoll) return;
+    clearTimeout(this.draftBatchListPoll.timer);
+    this.draftBatchListPoll = null;
+  }
+
+  private clearDraftBatchPolls(): void {
+    this.clearDraftBatchListPoll();
+    for (const { timer } of this.draftBatchPolls.values()) clearTimeout(timer);
+    this.draftBatchPolls.clear();
+  }
+
+  unwatchDraftBatch(batchId: string): void {
+    const current = this.draftBatchPolls.get(batchId); if (!current) return;
+    clearTimeout(current.timer); this.draftBatchPolls.delete(batchId);
+  }
+
+  private upsertDraftBatch(batch: ClientDraftBatch): void {
+    const index = this.state.draftBatches.findIndex(value => value.batchId === batch.batchId);
+    const batches = index < 0 ? [batch, ...this.state.draftBatches] : this.state.draftBatches.map((value, position) => position === index ? batch : value);
+    this.patch({ draftBatches: batches });
   }
   private async run(key: string, work: (signal: AbortSignal) => Promise<void>, exclusive = false, clearNotice = true): Promise<void> {
     if (this.stopped || (exclusive && this.requests.has(key))) return;
@@ -632,6 +884,9 @@ export class WorkbenchController {
       this.abortWorkflowRequests();
       this.retiredGenerations.add(previousGeneration);
       this.jobObservations.clear();
+      this.clearDraftBatchPolls();
+      this.draftBatchHandedOff.clear();
+      this.patch({ draftBatchPreview: null, draftBatchPollingPaused: [], draftBatchHandoffIntentId: null, draftBatchError: null });
     }
     this.snapshotSequence = observation.sequence;
     const currentObservation = { ...observation, generationId: snapshot.generationId };

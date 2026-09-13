@@ -7,6 +7,8 @@ import { createSetupViewController } from "../../src/client/setup-view.tsx";
 import { ClientFault, resolveCurrentSession, terminalJob, unwrapAnswer, WorkbenchController, type SessionTarget } from "../../src/client/controller.ts";
 import type { ChannelInspection, PublishingType } from "../../src/domain/channelPublishing.ts";
 import type { PublicationDraft } from "../../src/domain/publicationDraft.ts";
+import type { DraftBatch, DraftBatchEntry, DraftBatchPreview } from "../../src/domain/draftBatch.ts";
+import type { ContentRef } from "../../src/domain/primitives.ts";
 
 const ref = "wmc:11111111-1111-4111-8111-111111111111" as const;
 const otherRef = "wmc:22222222-2222-4222-8222-222222222222" as const;
@@ -53,6 +55,9 @@ function setup(session?: SessionTarget, respond?: (request: WorkbenchRequest) =>
   return { controller, request, intentTask, remote };
 }
 const acceptPrompt = () => vi.fn<SessionTarget["prompt"]>().mockResolvedValue({ ok: true, value: { accepted: true } });
+const draftEntry = (status: DraftBatchEntry["status"] = "pending", contentRef: ContentRef = ref): DraftBatchEntry => ({ contentRef, title: "Batch article", revisionDigest: "sha256:revision-a", inputDigest: "sha256:input-a", status, code: status === "succeeded" ? "DRAFT_CREATED" : "READY", safeMessage: status === "succeeded" ? "已创建草稿" : "可发送到草稿箱", jobId: null, intentId: null, targetRef: null });
+const draftPreview = (intentId = "draft-intent-test", contentRef: ContentRef = ref): DraftBatchPreview => ({ schemaVersion: "wemedia.draft-batch-preview/v1", intentId, generationId: snapshot.generationId, expiresAt: "2099-01-01T00:00:00.000Z", scope: "selected", entries: [draftEntry("pending", contentRef)], eligibleCount: 1 });
+const runningDraftBatch = (status: DraftBatch["status"] = "running"): DraftBatch => ({ schemaVersion: "wemedia.draft-batch/v1", batchId: "draft-batch-test", generationId: snapshot.generationId, status, createdAt: "2026-09-13T00:00:00.000Z", entries: [draftEntry(status === "completed" ? "succeeded" : "running")] });
 
 async function submitCreation() {
   const fixture = setup();
@@ -917,6 +922,61 @@ describe("submission acknowledgement and Agent handoff races", () => {
     if (!["close", "disconnect"].includes(change)) expect(controller.getSnapshot().notice?.code).toBe("INTENT_EXPIRED");
     expect(fixture.request.mock.calls.some(([input]) => input.operation === "start_action")).toBe(false);
     controller.dispose(); fixture.controller.dispose();
+  });
+});
+
+describe("Draft batch handoff and recent queue state", () => {
+  async function previewFixture(session?: SessionTarget) {
+    const fixture = setup(session);
+    await fixture.controller.refresh();
+    const original = fixture.request.getMockImplementation()!;
+    fixture.request.mockImplementation((input, signal) => input.operation === "preview_draft_batch" ? Promise.resolve(answer(draftPreview())) : original(input, signal));
+    await fixture.controller.previewDraftBatch("selected", [ref]);
+    return fixture;
+  }
+
+  it("rejects duplicate or over-limit selected refs before the remote preview", async () => {
+    const fixture = setup(); await fixture.controller.refresh(); fixture.request.mockClear();
+    await fixture.controller.previewDraftBatch("selected", [ref, ref]);
+    expect(fixture.request).not.toHaveBeenCalled(); expect(fixture.controller.getSnapshot().draftBatchError).toContain("不能重复");
+    const tooMany = Array.from({ length: 51 }, (_, index) => `wmc:${String(index + 1).padStart(8, "0")}-0000-4000-8000-000000000000` as typeof ref);
+    await fixture.controller.previewDraftBatch("selected", tooMany);
+    expect(fixture.request).not.toHaveBeenCalled(); expect(fixture.controller.getSnapshot().draftBatchError).toContain("最多发送 50"); fixture.controller.dispose();
+  });
+
+  it("blocks a dirty article before handing a draft batch to the current Agent", async () => {
+    const prompt = acceptPrompt(); const fixture = await previewFixture({ prompt });
+    await fixture.controller.select(ref); fixture.controller.updateEdit({ title: "Unsaved batch edit" });
+    await fixture.controller.handoffDraftBatchIntent("draft-intent-test");
+    expect(fixture.intentTask).not.toHaveBeenCalled(); expect(prompt).not.toHaveBeenCalled(); expect(fixture.controller.getSnapshot().draftBatchError).toContain("未保存修改"); fixture.controller.dispose();
+  });
+
+  it("marks the batch intent before an uncertain prompt result and never duplicates handoff", async () => {
+    const prompt = vi.fn<SessionTarget["prompt"]>().mockResolvedValue({ ok: false, error: { code: "internal", message: "uncertain", details: {} } });
+    const fixture = await previewFixture({ prompt });
+    await expect(fixture.controller.handoffDraftBatchIntent("draft-intent-test")).rejects.toMatchObject({ code: "internal" });
+    await fixture.controller.handoffDraftBatchIntent("draft-intent-test");
+    expect(fixture.intentTask).toHaveBeenCalledTimes(1); expect(prompt).toHaveBeenCalledTimes(1); expect(fixture.controller.getSnapshot().draftBatchError).toContain("交给当前 Agent"); fixture.controller.dispose();
+  });
+
+  it("rechecks the current preview after intentTask resolves", async () => {
+    const prompt = acceptPrompt(); const fixture = await previewFixture({ prompt });
+    const pending = deferred<Awaited<ReturnType<WemediaRemote["intentTask"]>>>(); fixture.intentTask.mockImplementation(() => pending.promise);
+    const work = fixture.controller.handoffDraftBatchIntent("draft-intent-test");
+    await vi.waitFor(() => expect(fixture.intentTask).toHaveBeenCalledTimes(1));
+    const original = fixture.request.getMockImplementation()!;
+    fixture.request.mockImplementation((input, signal) => input.operation === "preview_draft_batch" ? Promise.resolve(answer(draftPreview("new-draft-intent", otherRef))) : original(input, signal));
+    await fixture.controller.previewDraftBatch("selected", [otherRef]);
+    pending.resolve({ ok: true, value: { ok: true, code: "AGENT_TASK_READY", prompt: "stale batch task" } }); await expect(work).rejects.toMatchObject({ code: "DRAFT_BATCH_STALE" });
+    expect(prompt).not.toHaveBeenCalled(); expect(fixture.controller.getSnapshot().draftBatchError).toContain("预览"); fixture.controller.dispose();
+  });
+
+  it("keeps recent batch list state and continues reading stopped batches with running entries", async () => {
+    const fixture = setup(); await fixture.controller.refresh(); const original = fixture.request.getMockImplementation()!;
+    fixture.request.mockImplementation((input, signal) => input.operation === "list_draft_batches" ? Promise.resolve(answer({ schemaVersion: "wemedia.draft-batch-list/v1", batches: [runningDraftBatch()] })) : input.operation === "cancel_draft_batch" ? Promise.resolve(answer(runningDraftBatch("stopped"))) : original(input, signal));
+    await fixture.controller.listDraftBatches(); expect(fixture.controller.getSnapshot().draftBatches).toEqual([runningDraftBatch()]);
+    await fixture.controller.cancelDraftBatch("draft-batch-test"); expect(fixture.controller.getSnapshot().draftBatches[0]?.status).toBe("stopped");
+    expect(fixture.request).toHaveBeenCalledWith({ operation: "cancel_draft_batch", batchId: "draft-batch-test" }, expect.any(AbortSignal)); fixture.controller.dispose();
   });
 });
 

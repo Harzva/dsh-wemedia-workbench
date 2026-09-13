@@ -46,7 +46,7 @@ export async function fixture() {
     verify: async () => success({ approved: grant }),
   } : undefined };
   const jobs = new FileWorkbenchJobs(store);
-  const service = new WorkbenchService({ documents, jobs, adapter, approvals, clock: { nowIso: now, monotonicMs: () => Date.parse(time) }, ids, hasher: { digest: sha256 } });
+  const service = new WorkbenchService({ documents, draftBatchStore: store, jobs, adapter, approvals, clock: { nowIso: now, monotonicMs: () => Date.parse(time) }, ids, hasher: { digest: sha256 } });
   await service.initialize();
   const create = async (): Promise<ArticleDocument> => documents.create({ contentRef: `wmc:${randomUUID()}`, metadata: { articleId: `fixture-${randomUUID()}`, title: "Fixture article", author: "Editor", digest: "An accurately sourced article with a clear description.", kind: "article", sourceUrl: "https://example.org/article", pdfUrl: "", codeUrl: "", titlePrefix: "" } });
   return { directory, sourcePath, writePath, dataPath, roots, store, documents, adapter, approvals, jobs, service, create, now, setTime: (value: string) => { time = value; }, setAccount: (value: string) => { account = value; }, setGrant: (value: boolean) => { grant = value; }, setAfterApproval: (value: () => Promise<void>) => { afterApproval = value; }, remoteCalls: () => remoteCalls,
