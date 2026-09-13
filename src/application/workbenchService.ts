@@ -18,7 +18,7 @@ import { isJsonObject } from "../domain/json.ts";
 import type { JsonObject } from "../domain/json.ts";
 import { decodeWorkbenchRequest } from "../domain/workbenchRequest.ts";
 import { REVIEW_KINDS, WORKBENCH_SCHEMA, WorkbenchFault } from "../domain/workbench.ts";
-import type { ActionPreview, ArticleDocument, ArticleEdit, ArticleMetadata, DraftTarget, WorkbenchAction, WorkbenchAnswer, WorkbenchCaller, WorkbenchJob, WorkbenchRequest, WorkbenchValue, WorkflowImportPreview } from "../domain/workbench.ts";
+import type { ActionPreview, ArticleDocument, ArticleEdit, ArticleMetadata, DraftTarget, WorkbenchAction, WorkbenchAnswer, WorkbenchCaller, WorkbenchContentSummary, WorkbenchJob, WorkbenchRequest, WorkbenchValue, WorkflowImportPreview } from "../domain/workbench.ts";
 import type { Clock, IdGenerator } from "../ports/clock.ts";
 import type { WorkbenchAdapter, WorkbenchApprovalProvider, WorkbenchDocuments, WorkbenchHasher, WorkbenchJobs } from "../ports/workbench.ts";
 import type { WorkbenchRemoteResult, WorkflowImportCandidate } from "../ports/workbench.ts";
@@ -33,6 +33,7 @@ import type { Notifier, Notification } from "../ports/notifier.ts";
 
 type SavedIntent = { intent: ActionIntent; action: WorkbenchAction | "create_content" | "create_publication" | "save_publication"; target: DraftTarget | null; edit?: ArticleEdit; editAssets?: ArticleDocument["assets"]; metadata?: ArticleMetadata; publicationPlan?: PublicationPlan; callerKey?: string; consumed: boolean };
 type SavedImport = { intent: ActionIntent; candidate: WorkflowImportCandidate; accountRef: string | null; targetsDigest: string; callerKey: string; consumed: boolean };
+type DraftBatchQualityContext = { existingCatalog: readonly WorkbenchContentSummary[] };
 type ResultStatus = "succeeded" | "failed" | "cancelled" | "timed_out" | "reconcile_required";
 interface RecoveryBinding extends JsonObject {
   schemaVersion: "wemedia.workbench-result/v1";
@@ -435,13 +436,18 @@ export class WorkbenchService {
     return { ...job, safeMessage: TERMINAL.has(job.status) ? job.safeMessage : "取消已请求，正在确认进程结束" };
   }
   private async draftBatchCandidates(scope: "selected" | "pending", refs: ContentRef[] | undefined, signal: AbortSignal): Promise<DraftBatchEntry[]> {
-    const catalog = await this.options.documents.list();
-    const selected = scope === "pending" ? catalog.filter(item => item.status === "ready").map(item => item.contentRef) : refs ?? [];
+    // Pending needs the authoritative catalog to discover every ready article.
+    // Selected only needs it when the quality gate needs duplicate context; the
+    // article read below remains the source of truth for membership and shape.
+    const catalog = scope === "pending" || this.options.quality ? await this.options.documents.list() : undefined;
+    const selected = scope === "pending" ? catalog!.filter(item => item.status === "ready").map(item => item.contentRef) : refs ?? [];
+    const titles = new Map((catalog ?? []).map(item => [item.contentRef, item.title]));
+    const qualityContext = catalog === undefined ? undefined : { existingCatalog: catalog };
     if (selected.length > DRAFT_BATCH_LIMIT) throw new WorkbenchFault("DRAFT_BATCH_LIMIT", "待发送文章超过 50 篇，请分批勾选发送；未截断清单");
     const entries: DraftBatchEntry[] = [];
     for (const contentRef of selected) {
       if (signal.aborted) throw new WorkbenchFault("REQUEST_CANCELLED", "批量预览已取消");
-      const entry: DraftBatchEntry = { contentRef, title: catalog.find(item => item.contentRef === contentRef)?.title ?? "无法读取的文章", revisionDigest: null, inputDigest: null, status: "blocked", code: "CONTENT_UNAVAILABLE", safeMessage: "内容无法读取或不是公众号文章", jobId: null, intentId: null, targetRef: null };
+      const entry: DraftBatchEntry = { contentRef, title: titles.get(contentRef) ?? "无法读取的文章", revisionDigest: null, inputDigest: null, status: "blocked", code: "CONTENT_UNAVAILABLE", safeMessage: "内容无法读取或不是公众号文章", jobId: null, intentId: null, targetRef: null };
       try {
         const document = await this.options.documents.read(contentRef);
         entry.title = document.metadata.title; entry.revisionDigest = document.revisionDigest;
@@ -459,7 +465,7 @@ export class WorkbenchService {
         } else if (!this.options.documents.settings().hasDataDir) {
           entry.code = "DATA_DIR_REQUIRED"; entry.safeMessage = "缺少持久任务目录，不能批量投递";
         } else {
-          const preview = await this.previewAction({ operation: "preview_action", contentRef, action: "create_draft" }, signal);
+          const preview = await this.previewAction({ operation: "preview_action", contentRef, action: "create_draft" }, signal, qualityContext);
           entry.inputDigest = preview.intent.inputDigest;
           const available = this.capabilities.some(report => report.channel === "wechat" && report.actions.some(action => action.action === "draft" && ["ready", "approval_required"].includes(action.status)));
           if (preview.intent.artifactDigest !== document.revisionDigest) {
@@ -556,11 +562,11 @@ export class WorkbenchService {
     this.remember({ intent, action, publicationPlan: plan, callerKey, target: null, consumed: false });
     return { intent, summary, publication: plan.publication };
   }
-  private async gates(document: ArticleDocument, signal: AbortSignal): Promise<GateReport> {
+  private async gates(document: ArticleDocument, signal: AbortSignal, qualityContext?: DraftBatchQualityContext): Promise<GateReport> {
     const report = await this.options.adapter.check(document, signal);
     const issues: GateIssue[] = [...report.issues];
     if (this.options.quality) {
-      const existing = (await this.options.documents.list()).filter(item => item.contentRef !== document.contentRef);
+      const existing = (qualityContext?.existingCatalog ?? await this.options.documents.list()).filter(item => item.contentRef !== document.contentRef);
       const common = await this.options.quality.run({ contentRef: document.contentRef, channel: "wechat", title: document.metadata.title, sourceIds: [`wechat:${document.metadata.articleId}`], topicKey: `wechat:${document.metadata.articleId}`, markdown: `${JSON.stringify(document.metadata)}\n${document.markdown}\n${document.html}`, manifest: document.metadata, paths: [document.document, document.htmlArtifact, ...document.assets.map(asset => asset.artifact)], artifacts: document.assets.map(asset => ({ ...asset.artifact, exists: true, role: "image", kind: asset.kind === "original" ? "original" : "other" })), existingRecords: existing.map(item => ({ recordId: item.contentRef, title: item.title, sourceIds: [`wechat:${item.articleId}`], status: "active" })) });
       issues.push(...common.issues);
     }
@@ -657,13 +663,13 @@ export class WorkbenchService {
       });
     } finally { this.contentLocks.delete(saved.intent.contentRef); }
   }
-  private async previewAction(request: Extract<WorkbenchRequest, { operation: "preview_action" }>, signal: AbortSignal): Promise<ActionPreview> {
+  private async previewAction(request: Extract<WorkbenchRequest, { operation: "preview_action" }>, signal: AbortSignal, qualityContext?: DraftBatchQualityContext): Promise<ActionPreview> {
     const document = await this.options.documents.read(request.contentRef);
     const action = request.action;
     if (usesAdapter(action)) this.capabilities = [await this.options.adapter.discover(signal)];
     const target = request.targetRef ? document.targets.find(value => value.targetRef === request.targetRef) ?? null : null;
     if ((action === "update_draft" || action === "sync") && !target) throw new WorkbenchFault("TARGET_REQUIRED", "请明确选择已绑定的公众号草稿");
-    const gates = await this.gates(document, signal);
+    const gates = await this.gates(document, signal, qualityContext);
     const blocking = isRemoteWrite(action) ? gates.issues.filter(issue => issue.status === "block").map(issue => issue.code) : [];
     if (action === "create_draft" && document.targets.length) blocking.push("DRAFT_TARGET_EXISTS");
     if (usesAdapter(action) && !this.options.adapter.accountRef()) blocking.push("WECHAT_ACCOUNT_UNAVAILABLE");

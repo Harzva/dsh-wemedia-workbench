@@ -115,6 +115,17 @@ describe("draft batch coordinator", () => {
     other.elapse(600_000);
     await expect(other.service.request({ operation: "start_draft_batch", intentId: preview.intentId }, agent, signal())).rejects.toMatchObject({ code: "BATCH_INTENT_EXPIRED" });
   });
+  it("starts the preview TTL after delayed candidate computation", async () => {
+    const f = fixture();
+    const implementation = f.candidates.getMockImplementation()!;
+    f.candidates.mockImplementationOnce(async () => {
+      f.elapse(600_001);
+      return implementation();
+    });
+    const preview = await f.requestPreview();
+    f.elapse(599_999);
+    await expect(f.service.request({ operation: "start_draft_batch", intentId: preview.intentId }, agent, signal())).resolves.toMatchObject({ status: "running" });
+  });
   it("limits preview memory and frees expired entries", async () => {
     const f = fixture();
     for (let index = 0; index < 100; index++) await f.requestPreview();

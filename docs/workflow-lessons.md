@@ -132,3 +132,25 @@ or persisted state schemas. Source tests and synthetic PDF checks do not prove
 that a live model will follow every instruction. Validate a built version in
 an isolated DSH profile before switching a production draft session; do not
 hot-replace an active batch. Retain the known-good build for rollback.
+
+Match the installation path as well as the package bytes during acceptance.
+Installing a tarball into a fresh profile can resolve a different transitive
+peer graph from an independent source checkout, even when the plugin bundles
+are identical. Compare the profile lockfile and resolved peer versions. A
+successful cold start does not prove every loader path is covered; investigate
+peer warnings in isolation and never change dependencies during an active write.
+
+## Bound batch preflight work
+
+A selected batch must not repeatedly hydrate the entire article library for
+every candidate. Full article reads can include images and review artifacts;
+repeating them for duplicate checks makes a small selection scale with the
+whole library. Keep any shared duplicate-check snapshot local to one preview
+request, while preserving fresh per-article reads and fresh checks at dispatch
+and after approval. Pending scope still requires the complete ready catalog.
+
+Measure preview preparation separately from remote delivery. Start the preview
+expiry window after preparation completes, so slow read-only checks do not
+consume the user's confirmation window. Cancelling a slow preview is not a
+failed delivery and must not create a replacement remote job. Verify job state
+before continuing through another approved workflow.

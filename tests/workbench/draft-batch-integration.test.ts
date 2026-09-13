@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import type { DraftBatch, DraftBatchPreview } from "../../src/domain/draftBatch.ts";
+import type { ContentRef } from "../../src/domain/primitives.ts";
 import type { ActionPreview, ArticleDocument, WorkbenchAnswer } from "../../src/domain/workbench.ts";
+import { WorkbenchFault } from "../../src/domain/workbenchFault.ts";
 import { createWorkbenchTools } from "../../src/host/tools.ts";
 import { fixture } from "./fixture.ts";
 
@@ -71,10 +73,28 @@ describe("batch drafts through the real shared workbench", () => {
 
   it("selects all ready articles from the authoritative catalog, not library pagination", async () => {
     const f = await setup(); const first = await f.ready(), second = await f.ready(); await f.create();
+    const list = vi.spyOn(f.documents, "list");
     const preview = await f.invoke<DraftBatchPreview>("wemedia_preview_draft_batch", { scope: "pending" });
     expect(preview.entries.map(item => item.contentRef).sort()).toEqual([first.contentRef, second.contentRef].sort());
     expect(preview.eligibleCount).toBe(2); expect(f.remoteCalls()).toBe(0);
+    expect(list).toHaveBeenCalledOnce();
     expect(await f.service.request({ operation: "preview_draft_batch", scope: "pending", contentRefs: [first.contentRef] }, user)).toMatchObject({ ok: false });
+  });
+
+  it("reads selected refs directly and blocks unknown or invalid articles without a catalog", async () => {
+    const f = await setup(); const document = await f.ready();
+    const unknown = "wmc:00000000-0000-4000-8000-000000000099" as ContentRef;
+    const invalid = "wmc:00000000-0000-4000-8000-000000000098" as ContentRef;
+    const originalRead = f.documents.read.bind(f.documents);
+    vi.spyOn(f.documents, "read").mockImplementation(async contentRef => {
+      if (contentRef === invalid) throw new WorkbenchFault("DOCUMENT_INVALID", "synthetic non-article document");
+      return originalRead(contentRef);
+    });
+    const list = vi.spyOn(f.documents, "list");
+    const preview = await f.invoke<DraftBatchPreview>("wemedia_preview_draft_batch", { scope: "selected", contentRefs: [document.contentRef, unknown, invalid] });
+    expect(list).not.toHaveBeenCalled();
+    expect(preview.entries.map(item => item.status)).toEqual(["pending", "blocked", "blocked"]);
+    expect(preview.entries.slice(1).map(item => item.code)).toEqual(["CONTENT_NOT_FOUND", "DOCUMENT_INVALID"]);
   });
 
   it("does not dispatch when the account or article changes after the batch preview", async () => {

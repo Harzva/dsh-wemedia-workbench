@@ -111,8 +111,8 @@ export class DraftBatchService {
     return saved;
   }
   private async preview(scope: DraftBatchScope, refs: ContentRef[] | undefined, signal: AbortSignal): Promise<DraftBatchPreview> {
-    const now = Date.parse(this.options.clock.nowIso());
-    for (const [id, saved] of this.previews) if (Date.parse(saved.value.expiresAt) <= now) this.previews.delete(id);
+    const startedAt = Date.parse(this.options.clock.nowIso());
+    for (const [id, saved] of this.previews) if (Date.parse(saved.value.expiresAt) <= startedAt) this.previews.delete(id);
     if (this.previews.size >= 100) throw new WorkbenchFault("BATCH_PREVIEW_LIMIT", "批量预览过多，请等待旧预览过期");
     const candidates = await this.options.candidates(scope, refs ? [...refs] : undefined, signal);
     if (candidates.length > DRAFT_BATCH_LIMIT) throw new WorkbenchFault("BATCH_LIMIT", "单批最多 50 篇，请缩小选择范围");
@@ -126,8 +126,10 @@ export class DraftBatchService {
       if (uncertain) Object.assign(item, { status: "blocked", code: "BATCH_RECONCILE_REQUIRED", safeMessage: "此前发送意图尚未确认，请先核对；此项不会重复创建" });
     }
     if (signal.aborted || this.disposed) throw new WorkbenchFault("REQUEST_CANCELLED", "批量预览已取消");
+    const completedAt = Date.parse(this.options.clock.nowIso());
+    for (const [id, saved] of this.previews) if (Date.parse(saved.value.expiresAt) <= completedAt) this.previews.delete(id);
     if (this.previews.size >= 100) throw new WorkbenchFault("BATCH_PREVIEW_LIMIT", "批量预览过多，请等待旧预览过期");
-    const value: DraftBatchPreview = { schemaVersion: "wemedia.draft-batch-preview/v1", intentId: this.options.ids.opaqueId("batchintent"), generationId: this.options.generationId, expiresAt: new Date(now + 10 * 60_000).toISOString(), scope, entries, eligibleCount: entries.filter(item => item.status === "pending").length };
+    const value: DraftBatchPreview = { schemaVersion: "wemedia.draft-batch-preview/v1", intentId: this.options.ids.opaqueId("batchintent"), generationId: this.options.generationId, expiresAt: new Date(completedAt + 10 * 60_000).toISOString(), scope, entries, eligibleCount: entries.filter(item => item.status === "pending").length };
     this.previews.set(value.intentId, { value: copy(value), batchId: null });
     return value;
   }
