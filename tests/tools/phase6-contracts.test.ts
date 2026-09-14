@@ -71,9 +71,9 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 describe("P6 typed publication, mapping and setup tools", () => {
-  it("projects exactly 51 tools and a deterministic fully structured Native/PTC SDK", () => {
+  it("projects exactly 52 tools and a deterministic fully structured Native/PTC SDK", () => {
     const f = harness();
-    expect(WORKBENCH_TOOL_NAMES).toHaveLength(51); expect(new Set(WORKBENCH_TOOL_NAMES).size).toBe(51);
+    expect(WORKBENCH_TOOL_NAMES).toHaveLength(52); expect(new Set(WORKBENCH_TOOL_NAMES).size).toBe(52);
     const definitions = f.tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, output: tool.output.schema }));
     const sdk = renderToolsSdk(definitions); expect(sdk).toBe(renderToolsSdk([...definitions].reverse()));
     for (const field of ["publicationRef", "mappingRef", "facets", "timeField", "caption", "coverItemId", "generatedDigest", "dirty", "retainedSourceRecordIds", "blockingCodes", "requiresReconnect", "dataBase64"]) expect(sdk).toContain(field);

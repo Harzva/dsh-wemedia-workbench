@@ -204,6 +204,7 @@ export type WorkbenchRequest = import("./draftBatch.ts").DraftBatchRequest | imp
   | { operation: "mapping_preview"; change: MappingChangeInput }
   | { operation: "mapping_apply"; intentId: string }
   | { operation: "platform_catalog" }
+  | { operation: "article_templates" }
   | { operation: "setup_inspect" }
   | ({ operation: "setup_preview" } & SetupSelection)
   | { operation: "setup_apply"; intentId: string }
@@ -223,7 +224,7 @@ export type WorkbenchRequest = import("./draftBatch.ts").DraftBatchRequest | imp
   | { operation: "start_action"; intentId: string }
   | { operation: "get_job" | "cancel_job"; jobId: string }
   | { operation: "record_review"; contentRef: ContentRef; kind: ReviewKind; revisionDigest: string; artifact: ArtifactRef; summary: string }
-  | { operation: "create_content"; title: string; sourceUrl: string; kind: ArticleMetadata["kind"]; applyIntentId?: string };
+  | { operation: "create_content"; title: string; sourceUrl: string; kind: ArticleMetadata["kind"]; templateId?: import("./articleTemplates.ts").ArticleTemplateId; applyIntentId?: string };
 
 export type WorkbenchValue = WorkbenchSnapshot | WorkbenchPage | LibraryPage | LibraryDetail | LibraryMediaChunk | ArticleDocument | GateReport | ActionPreview | WorkbenchJob | PreviewDocument | TaskBrief | AiWorkflowResult | WorkflowImportPreview | JsonObject;
 

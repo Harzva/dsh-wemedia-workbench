@@ -400,10 +400,10 @@ export class FileWorkbenchDocuments implements WorkbenchDocuments {
     await exclusive(resolve(created.value.absolutePath, "wechat-document.json"), JSON.stringify({ schemaVersion: DOCUMENT_SCHEMA, metadata, contentFile: "article.html", markdownFile: "article.md" }));
     return { rootId: root.id, relativePath: `${folder}/wechat-document.json` };
   }
-  async create(input: { contentRef: ContentRef; metadata: ArticleMetadata }): Promise<ArticleDocument> {
+  async create(input: { contentRef: ContentRef; metadata: ArticleMetadata; body?: { html: string; markdown: string } }): Promise<ArticleDocument> {
     if (!parseContentRef(input.contentRef).ok) fail("CONTENT_REF_INVALID", "内容引用无效");
     const escaped = input.metadata.title.replace(/[&<>"']/gu, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-    const document = await this.writeVersion(input.contentRef, { metadata: input.metadata, html: `<h1>${escaped}</h1><p>请完成资料研究和文章正文。</p>`, markdown: `# ${input.metadata.title}\n` });
+    const document = await this.writeVersion(input.contentRef, { metadata: input.metadata, html: input.body?.html ?? `<h1>${escaped}</h1><p>请完成资料研究和文章正文。</p>`, markdown: input.body?.markdown ?? `# ${input.metadata.title}\n` });
     await this.options.store.update(state => {
       if (Object.keys(entry(state, input.contentRef)).length) fail("CONTENT_EXISTS", "内容已存在");
       put(state, input.contentRef, { document, reviews: [], targets: [], uploads: [] });

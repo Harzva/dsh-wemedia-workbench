@@ -26,8 +26,8 @@ function success<T>(answer: WorkbenchAnswer): T { if (!answer.ok) throw new Erro
 describe("shared native/PTC tool projection", () => {
   it("generates precise canonical SDK outputs without a custom run_code executor", async () => {
     const f = await setup();
-    expect(WORKBENCH_TOOL_NAMES).toHaveLength(51);
-    expect(new Set(WORKBENCH_TOOL_NAMES).size).toBe(51);
+    expect(WORKBENCH_TOOL_NAMES).toHaveLength(52);
+    expect(new Set(WORKBENCH_TOOL_NAMES).size).toBe(52);
     expect(WORKBENCH_TOOL_NAMES).not.toContain("run_code");
     const inputs = f.tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, output: tool.output.schema }));
     const sdk = renderToolsSdk(inputs);

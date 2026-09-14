@@ -1,4 +1,5 @@
 import { WechatDraftGuide } from "./wechat-draft-guide.tsx";
+import { ArticleTemplatePicker } from "./article-template-picker.tsx";
 import { ReferenceLibrary } from "./reference-library.tsx";
 import { VersionHistoryView, CoverageSummary, EvidenceReader } from "./inspection.tsx";
 import React, { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -134,7 +135,30 @@ export function CreateArticle({ controller, state, open, onClose, onCreated }: {
   const pending = busy(state, "mutation") || busy(state, "create-preview") || busy(state, "publication-create-preview");
   const locked = pending || state.snapshot?.settings.hasWriteRoot === false;
   const confirm = (): void => { void (media ? controller.confirmPublication(true) : controller.confirmCreation()).then(job => { if (job && live.current) { onClose(); onCreated?.(job); } }); };
-  return <Modal open={open} onClose={() => { if (!pending) { clearPreview(); onClose(); } }} title="新建内容" closeLabel="关闭新建内容" className="wm-workbench wm-create-dialog" description="选择文章、视频或图文，先建立本地发布稿。"><style>{workbenchStyles}{publicationEditorStyles}</style><div ref={ref} tabIndex={-1} className="wm-stack"><form className="wm-stack" onSubmit={event => { event.preventDefault(); if (locked) return; if (type === "video" || type === "image_text") void controller.previewPublicationCreation(type, input.title); else void controller.previewCreation(input); }}><label>发布类型<select aria-label="新建发布类型" value={type} disabled={locked} onChange={event => { const next = event.target.value as typeof type; setType(next); if (next === "article" || next === "paper") setInput({ ...input, kind: next }); clearPreview(); }}><option value="article">文章</option><option value="paper">论文解读</option><option value="video">视频</option><option value="image_text">图文</option></select></label><label>{media ? "发布稿标题" : "文章标题"}<input data-initial-focus="true" aria-label="新建内容标题" required maxLength={media ? 200 : 256} placeholder="给这份内容一个清楚的主题" value={input.title} disabled={locked} onChange={event => update({ title: event.target.value })} /></label>{!media && <label>来源 URL（可选）<input type="url" placeholder="https://…" value={input.sourceUrl} disabled={locked} onChange={event => update({ sourceUrl: event.target.value })} /></label>}{media && <p className="wm-inline-note">创建后可编辑正文、选择本地{type === "video" ? "视频与封面" : "有序配图"}并保存版本。</p>}<Button className={btn} type="submit" variant="primary" disabled={locked || !input.title.trim()}>{pending ? "正在检查创建条件…" : "预览创建操作"}</Button></form>{preview && <section ref={previewRef} tabIndex={-1} aria-label="创建意图预览" className="wm-card wm-intent wm-stack"><Intent intent={preview.intent} summary={preview.summary} /><Button className={btn} variant="primary" disabled={locked || preview.intent.blockingGateCodes.length > 0} onClick={confirm}>{media ? "确认创建本地发布稿" : "确认创建本地文章"}</Button></section>}{state.notice?.kind === "error" && <p role="alert" className="wm-error">{state.notice.text}</p>}</div></Modal>;
+  return <Modal open={open} onClose={() => { if (!pending) { clearPreview(); onClose(); } }} title="新建内容" closeLabel="关闭新建内容" className="wm-workbench wm-create-dialog">
+    <style>{workbenchStyles}{publicationEditorStyles}</style>
+    <div ref={ref} tabIndex={-1} className="wm-stack">
+      <form className="wm-stack" onSubmit={event => {
+        event.preventDefault();
+        if (locked) return;
+        if (type === "video" || type === "image_text") void controller.previewPublicationCreation(type, input.title);
+        else void controller.previewCreation(input);
+      }}>
+        <label>发布类型<select aria-label="新建发布类型" value={type} disabled={locked} onChange={event => {
+          const next = event.target.value as typeof type;
+          setType(next);
+          if (next === "article" || next === "paper") setInput({ ...input, kind: next, templateId: "blank" });
+          clearPreview();
+        }}><option value="article">文章</option><option value="paper">论文解读</option><option value="video">视频</option><option value="image_text">图文</option></select></label>
+        {!media && <ArticleTemplatePicker kind={input.kind} value={input.templateId ?? "blank"} disabled={locked} onChange={templateId => update({ templateId })} />}
+        <label>{media ? "发布稿标题" : "文章标题"}<input data-initial-focus="true" aria-label="新建内容标题" required maxLength={200} placeholder="给这份内容一个清楚的主题" value={input.title} disabled={locked} onChange={event => update({ title: event.target.value })} /></label>
+        {!media && <label>来源 URL（可选）<input type="url" placeholder="https://…" value={input.sourceUrl} disabled={locked} onChange={event => update({ sourceUrl: event.target.value })} /></label>}
+        <Button className={btn} type="submit" variant="primary" disabled={locked || !input.title.trim()}>{pending ? "正在检查创建条件…" : "预览创建操作"}</Button>
+      </form>
+      {preview && <section ref={previewRef} tabIndex={-1} aria-label="创建意图预览" className="wm-intent wm-stack"><Intent intent={preview.intent} summary={preview.summary} /><Button className={btn} variant="primary" disabled={locked || preview.intent.blockingGateCodes.length > 0} onClick={confirm}>{media ? "确认创建本地发布稿" : "确认创建本地文章"}</Button></section>}
+      {state.notice?.kind === "error" && <p role="alert" className="wm-error">{state.notice.text}</p>}
+    </div>
+  </Modal>;
 }
 
 type ArticleTab = "editor" | "materials" | "reviews" | "delivery" | "history";

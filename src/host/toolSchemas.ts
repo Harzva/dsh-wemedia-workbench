@@ -51,6 +51,7 @@ export const referencePageSchema = object({ schemaVersion: required(text), items
 export const referenceCollectionSchema = object({ schemaVersion: required(text), items: required(array(referenceItemSchema)), added: required(integer), updated: required(integer), partial: required(boolean), message: required(text) });
 export const referenceBriefSchema = object({ schemaVersion: required(text), ids: required(strings), action: required(enumeration(["analyze", "write"])), prompt: required(text) });
 export const createSchema: ValueSchemaSpec = { oneOf: [object({ intent: required(intentSchema), summary: required(strings) }), jobSchema] };
+export const articleTemplatesSchema = object({ templates: required(array(object({ id: required(text), version: required(integer), label: required(text), kind: required(enumeration(["paper", "article", "any"])), sections: required(array(object({ title: required(text), prompt: required(text) }))) }))) });
 export { reviewSchema, required, text, integer, enumeration, nullable, array, object, strings };
 
 /** Typed canonical values are shared by Native and DSH's generated PTC SDK. */

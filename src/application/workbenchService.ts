@@ -1,4 +1,5 @@
 import type { ReferenceLibraryService } from "./referenceLibraryService.ts";
+import { articleTemplate, articleTemplates, renderArticleTemplate } from "../domain/articleTemplates.ts";
 import { DraftBatchService } from "./draftBatchService.ts";
 import { DRAFT_BATCH_LIMIT, type DraftBatchEntry } from "../domain/draftBatch.ts";
 import type { AccountManagementService } from "./accountManagementService.ts";
@@ -31,7 +32,7 @@ import type { PublicationDrafts, PublicationPlan } from "../ports/publicationDra
 import type { PublicationDraft, PublicationDraftPreview } from "../domain/publicationDraft.ts";
 import type { Notifier, Notification } from "../ports/notifier.ts";
 
-type SavedIntent = { intent: ActionIntent; action: WorkbenchAction | "create_content" | "create_publication" | "save_publication"; target: DraftTarget | null; edit?: ArticleEdit; editAssets?: ArticleDocument["assets"]; metadata?: ArticleMetadata; publicationPlan?: PublicationPlan; callerKey?: string; consumed: boolean };
+type SavedIntent = { intent: ActionIntent; action: WorkbenchAction | "create_content" | "create_publication" | "save_publication"; target: DraftTarget | null; edit?: ArticleEdit; editAssets?: ArticleDocument["assets"]; metadata?: ArticleMetadata; creation?: { templateId: string; version: number; markdown: string; html: string }; publicationPlan?: PublicationPlan; callerKey?: string; consumed: boolean };
 type SavedImport = { intent: ActionIntent; candidate: WorkflowImportCandidate; accountRef: string | null; targetsDigest: string; callerKey: string; consumed: boolean };
 type DraftBatchQualityContext = { existingCatalog: readonly WorkbenchContentSummary[] };
 type ResultStatus = "succeeded" | "failed" | "cancelled" | "timed_out" | "reconcile_required";
@@ -418,20 +419,23 @@ export class WorkbenchService {
       case "start_action": return this.startAction(request.intentId, caller, signal);
       case "get_job": return request.jobId.startsWith("channeljob:") && this.channelService ? this.channelService.getJob(request.jobId) : { ...this.job(request.jobId) };
       case "cancel_job": return this.cancelJob(request.jobId);
+      case "article_templates": return { templates: articleTemplates() };
       case "create_content": {
         const metadata = decodeArticleMetadata({ articleId: "pending", title: request.title, kind: request.kind, sourceUrl: request.sourceUrl, pdfUrl: "", codeUrl: "", author: "", digest: "", titlePrefix: "" });
+        const template = articleTemplate(request.templateId ?? "blank");
+        const creation = { templateId: template.id, version: template.version, ...renderArticleTemplate(template.id, metadata.title, metadata.sourceUrl) };
         if (request.applyIntentId) {
           const saved = this.intents.get(request.applyIntentId);
-          if (!saved?.metadata || this.options.hasher.digest(JSON.stringify({ ...saved.metadata, articleId: "pending" })) !== this.options.hasher.digest(JSON.stringify(metadata))) throw new WorkbenchFault("INTENT_CHANGED", "创建内容与预览不一致");
+          if (!saved?.metadata || this.options.hasher.digest(JSON.stringify({ metadata: { ...saved.metadata, articleId: "pending" }, creation: saved.creation })) !== this.options.hasher.digest(JSON.stringify({ metadata, creation }))) throw new WorkbenchFault("INTENT_CHANGED", "创建内容或模板与预览不一致");
           return this.startAction(request.applyIntentId, caller, signal);
         }
         if (!this.options.documents.settings().hasWriteRoot) throw new WorkbenchFault("WRITE_ROOT_MISSING", "请先配置文章写入目录");
         const generated = formatContentRef(this.options.ids.uuidV4());
         if (!generated.ok) throw new WorkbenchFault("ID_UNAVAILABLE", "无法生成内容身份");
         metadata.articleId = `wm-${generated.value.slice(4)}`;
-        const intent = this.newIntent(generated.value, "create_content", this.options.hasher.digest(JSON.stringify(metadata)), `创建微信文章：${metadata.title}`, []);
-        this.remember({ intent, action: "create_content", metadata, target: null, consumed: false });
-        return { intent, summary: ["仅写入独立的新文章目录", "不会创建公众号草稿或正式发布"] };
+        const intent = this.newIntent(generated.value, "create_content", this.options.hasher.digest(JSON.stringify({ metadata, creation })), `创建微信文章：${metadata.title}`, []);
+        this.remember({ intent, action: "create_content", metadata, creation, target: null, consumed: false });
+        return { intent, summary: [`模板：${template.label} v${template.version}`, ...(template.sections.length ? [`结构：${template.sections.map(section => section.title).join("、")}`, "模板仅为待填写提纲，不代表事实、图表或审阅已经完成"] : []), "仅写入独立的新文章目录", "不会创建公众号草稿或正式发布"] };
       }
     }
   }
@@ -817,7 +821,7 @@ export class WorkbenchService {
       if (signal.aborted) throw new WorkbenchFault("REQUEST_CANCELLED", "请求已取消");
       this.assertExecutionIntent(saved);
       if (saved.action === "create_content") {
-        const created = await this.options.documents.create({ contentRef: saved.intent.contentRef, metadata: saved.metadata! });
+        const created = await this.options.documents.create({ contentRef: saved.intent.contentRef, metadata: saved.metadata!, ...(saved.creation ? { body: { html: saved.creation.html, markdown: saved.creation.markdown } } : {}) });
         job.artifactRefs = [`${created.document.rootId}:${created.document.relativePath}`];
       } else if (saved.action === "create_publication" || saved.action === "save_publication") {
         localPublicationStarted = true;
