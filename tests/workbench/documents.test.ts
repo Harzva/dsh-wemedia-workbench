@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isJsonObject } from "../../src/domain/json.ts";
 import type { JsonObject } from "../../src/domain/json.ts";
 import type { ArticleDocument, DraftTarget } from "../../src/domain/workbench.ts";
+import type { WorkbenchRemoteResult } from "../../src/ports/workbench.ts";
 import { fixture } from "./fixture.ts";
 
 vi.mock("node:fs/promises", async importOriginal => {
@@ -32,6 +33,20 @@ function targetFixture(doc: ArticleDocument, now: string) {
 }
 
 describe("versioned WeChat document repository", () => {
+  it("retains upload evidence after empty and partial failures, while a successful result replaces the map", async () => {
+    const f = await setup(), doc = await f.create();
+    const first = { source: "assets/first.png", sha256: "a".repeat(64), media_id: "FirstMedia", wechat_url: "https://mmbiz.qpic.cn/first" };
+    const second = { source: "assets/second.png", sha256: "b".repeat(64), media_id: "SecondMedia", wechat_url: "https://mmbiz.qpic.cn/second" };
+    const replacement = { ...first, sha256: "c".repeat(64), media_id: "ReplacementMedia", wechat_url: "https://mmbiz.qpic.cn/replacement" };
+    const failed: WorkbenchRemoteResult = { ok: false, code: "WECHAT_RATE_LIMITED", phase: "sync", channel: "wechat", sideEffect: "read", artifacts: [], issues: [], retryable: false, uploads: [] };
+    await overlay(f, doc, { uploads: [first, second] });
+    await f.documents.persistRemoteResult(doc, failed, null);
+    expect((await f.documents.privateRemoteState(doc.contentRef, null)).uploads).toEqual([first, second]);
+    await f.documents.persistRemoteResult(doc, { ...failed, uploads: [replacement] }, null);
+    expect((await f.documents.privateRemoteState(doc.contentRef, null)).uploads).toEqual([replacement, second]);
+    await f.documents.persistRemoteResult(doc, { ...failed, ok: true, uploads: [replacement] }, null);
+    expect((await f.documents.privateRemoteState(doc.contentRef, null)).uploads).toEqual([replacement]);
+  });
   it("creates stable content identities across scans and saves without replacing old files", async () => {
     const f = await setup();
     const original = await f.create();

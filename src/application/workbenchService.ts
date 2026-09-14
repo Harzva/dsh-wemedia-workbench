@@ -252,7 +252,13 @@ export class WorkbenchService {
     // Keep it as history: replaying its old projection would invalidate a later
     // successful sync. A failed projection changes the Job's result code, and a
     // failed terminal commit leaves it running; both still require recovery.
-    if (job.status === "reconcile_required" && binding.status === job.status && job.resultEventId === found.value.eventId && job.resultCode === found.value.evidence.code && isTimestamp(job.finishedAt)) return true;
+    if (job.status === "reconcile_required" && binding.status === job.status && job.resultEventId === found.value.eventId && job.resultCode === found.value.evidence.code && isTimestamp(job.finishedAt)) {
+      const superseded = this.ledgerEvents.slice(eventIndex + 1).some(event => event.contentRef === job.contentRef && (event.sideEffect === "remote_draft" || isJsonObject(event.remote?.workbenchRecovery) && event.remote.workbenchRecovery.targetRef === binding.targetRef));
+      if (sameRevision && !superseded && result.uploads?.length && document.targets.length === 1 && !document.targets[0]!.verifiedRevision) {
+        await this.options.documents.restoreMissingRemoteUploads?.(document, result, binding.targetRef, binding.accountRef);
+      }
+      return true;
+    }
     if (this.ledgerEvents.slice(eventIndex + 1).some(event => event.contentRef === job.contentRef && isJsonObject(event.remote?.workbenchRecovery) && event.remote.workbenchRecovery.targetRef === binding.targetRef)) throw new WorkbenchFault("LEDGER_TARGET_CHANGED", "目标已有后续操作结果，请人工核对；未覆盖现有草稿绑定");
     const target: DraftTarget = { targetRef: binding.targetRef, title: binding.title, label: `微信草稿 · ${binding.title}`, sourceUrl: binding.sourceUrl, verifiedRevision: "", verifiedAt: "" };
     // A later operation on this target outranks an older recovered result.

@@ -74,8 +74,80 @@ async function event(h: ReturnType<typeof build>, job: WorkbenchJob): Promise<Le
   if (!found.ok || !found.value) throw new Error("fixture ledger event missing");
   return found.value;
 }
+async function lostUploadFixture() {
+  const f = await fixture(); fixtures.push(f);
+  const empty = await f.create();
+  await writeFile(resolve(f.writePath, "figure.png"), "synthetic paper figure bytes");
+  const document = await f.documents.saveRevision(empty.contentRef, empty.revisionDigest, { metadata: empty.metadata, html: '<p>Fixture article.</p><img src="figure.png">', markdown: "Fixture article." });
+  await f.reviewAll(document);
+  const uploads = document.assets.map(asset => ({ source: asset.source, sha256: asset.digest.slice(7), media_id: "FixtureImage", wechat_url: "https://mmbiz.qpic.cn/fixture-image" }));
+  const original = f.adapter.run.bind(f.adapter);
+  vi.spyOn(f.adapter, "run").mockImplementationOnce(async (...args) => {
+    const result = await original(...args); delete result.verifiedAt;
+    return { ...result, ok: false, code: "WECHAT_RATE_LIMITED", reconcileRequired: true, uploads };
+  });
+  const h = build(f); await h.service.initialize();
+  const job = await execute(h, document);
+  const target = (await h.documents.read(document.contentRef)).targets[0]!;
+  const proof = await event(h, job);
+  // Reproduce a legacy failure projection without altering its canonical ledger.
+  await h.store.update(state => { (state.extensions.wechatDocuments as JsonObject)[document.contentRef] = { ...((state.extensions.wechatDocuments as JsonObject)[document.contentRef] as JsonObject), uploads: [] }; });
+  return { ...h, document, job, target, proof, uploads };
+}
 
 describe("ledger-first workbench result recovery", () => {
+  it("restores a lost upload map without replaying a write or marking an uncertain draft verified", async () => {
+    const h = await lostUploadFixture();
+    const ledgerBefore = await readFile(h.ledgerPath, "utf8");
+    await h.service.dispose();
+    const run = vi.spyOn(h.f.adapter, "run"); run.mockClear();
+    const reloaded = build(h.f); await reloaded.service.initialize();
+    expect((await reloaded.documents.privateRemoteState(h.document.contentRef, h.target)).uploads).toEqual(h.uploads);
+    expect(await reloaded.service.settle(h.job.jobId)).toEqual(h.job);
+    expect((await reloaded.documents.read(h.document.contentRef)).targets).toEqual([h.target]);
+    expect(h.target.verifiedRevision).toBe("");
+    expect(await readFile(h.ledgerPath, "utf8")).toBe(ledgerBefore);
+    expect(run).not.toHaveBeenCalled();
+    await reloaded.service.dispose();
+    const twice = build(h.f); await twice.service.initialize();
+    expect((await twice.documents.privateRemoteState(h.document.contentRef, h.target)).uploads).toEqual(h.uploads);
+    expect(run).not.toHaveBeenCalled();
+    run.mockImplementationOnce(async (action, document) => {
+      expect(action).toBe("sync");
+      expect((await twice.documents.privateRemoteState(document.contentRef, h.target)).uploads).toEqual(h.uploads);
+      return { ok: true, code: "WECHAT_DRAFT_VERIFIED", phase: "sync", channel: "wechat", sideEffect: "read", artifacts: [], issues: [], retryable: false, remote: { remoteId: "FixtureMediaID" }, revisionDigest: document.revisionDigest, verifiedAt: h.f.now(), uploads: h.uploads };
+    });
+    expect(await execute(twice, h.document, "sync", h.target)).toMatchObject({ status: "succeeded", resultCode: "WECHAT_DRAFT_VERIFIED" });
+    expect(await twice.service.settle(h.job.jobId)).toEqual(h.job);
+  });
+  it.each(["revision", "target", "asset", "account"] as const)("does not restore lost uploads when the %s binding differs", async changed => {
+    const h = await lostUploadFixture();
+    if (changed === "revision") await h.documents.saveRevision(h.document.contentRef, h.document.revisionDigest, { metadata: { ...h.document.metadata, title: "Changed title" }, html: h.document.html, markdown: h.document.markdown });
+    if (changed === "account") h.f.setAccount(`wechat-account:${"b".repeat(32)}`);
+    if (changed === "target") await h.store.update(state => { const saved = (state.extensions.wechatDocuments as JsonObject)[h.document.contentRef] as JsonObject; saved.targets = (saved.targets as JsonObject[]).map(target => ({ ...target, mediaId: "OtherMediaID" })); });
+    if (changed === "asset") {
+      const proof = h.proof;
+      (proof.remote!.uploads as JsonObject[])[0]!.sha256 = "f".repeat(64);
+      await writeFile(h.ledgerPath, `${JSON.stringify(proof)}\n`);
+    }
+    await h.service.dispose();
+    const run = vi.spyOn(h.f.adapter, "run"); run.mockClear();
+    const reloaded = build(h.f); await reloaded.service.initialize();
+    const current = await reloaded.documents.read(h.document.contentRef);
+    expect((await reloaded.documents.privateRemoteState(h.document.contentRef, current.targets[0]!)).uploads).toEqual([]);
+    expect(current.targets[0]!.verifiedRevision).toBe("");
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("does not restore an older upload map over a later remote-write attempt", async () => {
+    const h = await lostUploadFixture();
+    vi.spyOn(h.f.adapter, "run").mockResolvedValueOnce({ ok: false, code: "WECHAT_UPLOAD_RESULT_UNKNOWN", phase: "draft", channel: "wechat", sideEffect: "remote_draft", artifacts: [], issues: [], retryable: false, reconcileRequired: true, uploads: [] });
+    expect((await execute(h, h.document, "update_draft", h.target)).status).toBe("reconcile_required");
+    await h.service.dispose();
+    const run = vi.spyOn(h.f.adapter, "run"); run.mockClear();
+    const reloaded = build(h.f); await reloaded.service.initialize();
+    expect((await reloaded.documents.privateRemoteState(h.document.contentRef, h.target)).uploads).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+  });
   it.each(["projection", "terminalJob"] as const)("recovers a real %s commit failure without calling the remote adapter again", async fault => {
     const h = await setup(); h.faults[fault] = true;
     const job = await execute(h, h.document);

@@ -28,6 +28,7 @@ export interface WorkbenchDocuments {
   prepare(document: ArticleDocument, jobId: string): Promise<ArtifactRef[]>;
   recordReview(contentRef: ContentRef, evidence: Pick<ReviewEvidence, "kind" | "revisionDigest" | "artifact" | "reviewer" | "summary">): Promise<ReviewEvidence>;
   persistRemoteResult(document: ArticleDocument, result: AdapterResult, target: DraftTarget | null): Promise<void>;
+  restoreMissingRemoteUploads?(document: ArticleDocument, result: WorkbenchRemoteResult, targetRef: string, accountRef: string): Promise<void>;
   previewWorkflowImport?(contentRef: ContentRef, kind: WorkflowImportKind, artifact: ArtifactRef): Promise<WorkflowImportCandidate>;
   commitWorkflowImport?(contentRef: ContentRef, candidate: WorkflowImportCandidate, reviewer: "user" | "agent", identity?: { accountRef: string; verifiedAt: string }, signal?: AbortSignal, assertCurrent?: () => void): Promise<ArticleDocument>;
 }

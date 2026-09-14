@@ -49,6 +49,17 @@ single-article update, not another create operation.
 - `INTENT_CHANGED` proves the current binding differs, not why it differs.
   Do not attribute it to another session or a report edit without evidence.
 
+A failed readback may return an empty or partial upload map. It must not erase
+previously recorded uploads: retain the prior entries and merge returned
+entries by source. A successful readback supplies the complete replacement.
+When an older runtime has already lost the entire map, startup recovery can
+restore it only from a validated ledger result for the same account, exact
+remote target, revision and complete asset hashes. An existing map, a later
+remote-write attempt or a later target result prevents that historical repair.
+This restores local upload evidence only, with no remote request and no change
+to the original Job outcome or target verification. A separate native sync
+must still verify the actual current draft before it counts as delivered.
+
 The duplicate gate currently hashes its `existingRecords` input, including
 other article titles. That gate digest is part of the intent stamp. An
 unrelated article save can therefore invalidate a pending approval even when

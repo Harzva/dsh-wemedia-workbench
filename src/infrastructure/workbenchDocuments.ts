@@ -643,6 +643,24 @@ export class FileWorkbenchDocuments implements WorkbenchDocuments {
     this.version += 1;
     return this.read(contentRef);
   }
+  async restoreMissingRemoteUploads(document: ArticleDocument, result: WorkbenchRemoteResult, targetRef: string, accountRef: string): Promise<void> {
+    let restored = false;
+    await this.options.store.update(async state => {
+      const saved = entry(state, document.contentRef);
+      if (storedUploads(saved).length) return;
+      const targets = storedTargets(saved), target = targets[0];
+      const accounts = isJsonObject(saved.targetAccounts) ? saved.targetAccounts : {};
+      if (targets.length !== 1 || !Array.isArray(saved.targets) || saved.targets.length !== 1 || !target || target.targetRef !== targetRef || target.mediaId !== result.remote?.remoteId || target.title !== document.metadata.title || target.sourceUrl !== document.metadata.sourceUrl || target.verifiedRevision || target.verifiedAt || accounts[targetRef] !== undefined && accounts[targetRef] !== accountRef) fail("UPLOAD_RECOVERY_TARGET_CHANGED", "图片映射恢复目标已变化，未覆盖现有记录");
+      if (result.revisionDigest !== document.revisionDigest || (await this.read(document.contentRef)).revisionDigest !== document.revisionDigest) fail("UPLOAD_RECOVERY_REVISION_CHANGED", "图片映射与当前文章版本不一致，未恢复");
+      const uploads = storedUploads({ uploads: result.uploads ?? [] });
+      if (!uploads.length || uploads.length !== document.assets.length || !document.assets.every(asset => uploads.some(upload => upload.source === asset.source && `sha256:${upload.sha256}` === asset.digest))) fail("UPLOAD_RECOVERY_ASSETS_CHANGED", "账本图片映射未完整匹配当前素材，未恢复");
+      // Restore only a lost cache from a validated ledger result, never a target,
+      // verification flag, Job outcome or the historical result itself.
+      put(state, document.contentRef, { ...saved, uploads });
+      restored = true;
+    });
+    if (restored) this.version += 1;
+  }
   async persistRemoteResult(document: ArticleDocument, result: WorkbenchRemoteResult, target: DraftTarget | null): Promise<void> {
     await this.options.store.update(state => {
       const saved = entry(state, document.contentRef);
@@ -653,7 +671,10 @@ export class FileWorkbenchDocuments implements WorkbenchDocuments {
         const index = targets.findIndex(value => value.targetRef === targetRef);
         if (index < 0) targets.push(next); else targets[index] = next;
       }
-      put(state, document.contentRef, { ...saved, targets, uploads: result.uploads ?? saved.uploads ?? [], lastCode: result.code });
+      const priorUploads = storedUploads(saved);
+      const incomingUploads = result.uploads === undefined ? priorUploads : storedUploads({ uploads: result.uploads });
+      const uploads = result.ok ? incomingUploads : storedUploads({ uploads: [...new Map([...priorUploads, ...incomingUploads].map(upload => [upload.source, upload])).values()] });
+      put(state, document.contentRef, { ...saved, targets, uploads, lastCode: result.code });
     });
     this.version += 1;
   }
