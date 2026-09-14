@@ -42,6 +42,19 @@ async function setup(mode: "both" | "code" = "both") {
 }
 
 describe("real DSH native/PTC registry pipeline (no model or account)", () => {
+  it("exposes article templates through the real Native/PTC registry and honors native denial", async () => {
+    const f = await setup();
+    const direct = await f.call("wemedia_article_templates", {});
+    const nested = await f.code("return await tools.wemedia_article_templates({});");
+    expect(direct.isError).toBe(false);
+    expect(nested.value).toEqual({ logs: [], result: direct.value });
+    expect(direct.value).toMatchObject({ ok: true, value: { templates: expect.arrayContaining([expect.objectContaining({ id: "series-index" })]) } });
+    const requests = vi.spyOn(f.service, "request");
+    f.ctx.tools.guard(exec => exec.name === "wemedia_article_templates" ? "TEMPLATE_POLICY_DENY" : undefined);
+    expect((await f.code("return await tools.wemedia_article_templates({});")).isError).toBe(true);
+    expect(requests).not.toHaveBeenCalled();
+    expect(f.remoteCalls()).toBe(0);
+  });
   it.each(["zhihu", "xiaohongshu", "x"] as const)("shares %s channel inspection and local prepare through the actual Native/PTC pipeline", async channel => {
     const f = await setup(), doc = await f.create();
     for (const operation of ["channel_inspect", "channel_preflight"] as const) {

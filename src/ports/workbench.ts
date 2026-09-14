@@ -22,7 +22,7 @@ export interface WorkbenchDocuments {
   compareVersions?(contentRef: ContentRef, fromId: string, toId: string): Promise<VersionComparison>;
   evidenceDetail?(contentRef: ContentRef, evidenceId: string): Promise<EvidenceDetail>;
   settings(): WorkbenchSettings;
-  create(input: { contentRef: ContentRef; metadata: ArticleMetadata }): Promise<ArticleDocument>;
+  create(input: { contentRef: ContentRef; metadata: ArticleMetadata; body?: { html: string; markdown: string } }): Promise<ArticleDocument>;
   editAssets?(document: ArticleDocument, edit: ArticleEdit): Promise<ArticleDocument["assets"]>;
   saveRevision(contentRef: ContentRef, expectedDigest: string, edit: ArticleEdit, expectedAssets?: ArticleDocument["assets"]): Promise<ArticleDocument>;
   prepare(document: ArticleDocument, jobId: string): Promise<ArtifactRef[]>;

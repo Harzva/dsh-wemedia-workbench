@@ -16,6 +16,7 @@ import type { PublishingChannel, ChannelAction } from "./channelPublishing.ts";
 import { ACCOUNT_CHANNELS } from "./accounts.ts";
 import type { AccountChannel } from "./accounts.ts";
 import { decodeDraftBatchRequest } from "./draftBatch.ts";
+import { ARTICLE_TEMPLATE_IDS, articleTemplate, type ArticleTemplateId } from "./articleTemplates.ts";
 
 const fields: Record<WorkbenchRequest["operation"], readonly string[]> = {
   preview_draft_batch: ["scope", "contentRefs"], start_draft_batch: ["intentId"],
@@ -36,7 +37,8 @@ const fields: Record<WorkbenchRequest["operation"], readonly string[]> = {
   task_brief: ["contentRef", "action"], preview_action: ["contentRef", "action", "targetRef", "edit"],
   start_action: ["intentId"], get_job: ["jobId"], cancel_job: ["jobId"],
   record_review: ["contentRef", "kind", "revisionDigest", "artifact", "summary"],
-  create_content: ["title", "sourceUrl", "kind", "applyIntentId"],
+  article_templates: [],
+  create_content: ["title", "sourceUrl", "kind", "templateId", "applyIntentId"],
 };
 function invalid(): never { throw new WorkbenchFault("REQUEST_INVALID", "请求格式无效或包含不受支持的字段"); }
 function string(value: unknown, max = 256, empty = false): string {
@@ -57,6 +59,7 @@ export function decodeWorkbenchRequest(input: unknown): WorkbenchRequest {
     return value as ContentRef;
   };
   switch (operation) {
+    case "article_templates": return { operation };
     case "preview_draft_batch": case "start_draft_batch": case "advance_draft_batch": case "get_draft_batch": case "cancel_draft_batch": case "list_draft_batches":
       return decodeDraftBatchRequest(input);
     case "reference_list": return { operation };
@@ -184,7 +187,11 @@ export function decodeWorkbenchRequest(input: unknown): WorkbenchRequest {
     }
     case "create_content": {
       if (input.kind !== "paper" && input.kind !== "article") invalid();
-      return { operation, title: string(input.title, 200), sourceUrl: string(input.sourceUrl, 2048, true), kind: input.kind, ...(input.applyIntentId === undefined ? {} : { applyIntentId: string(input.applyIntentId) }) };
+      if (input.templateId !== undefined && !ARTICLE_TEMPLATE_IDS.includes(input.templateId as ArticleTemplateId)) invalid();
+      const templateId = (input.templateId ?? "blank") as ArticleTemplateId;
+      const template = articleTemplate(templateId);
+      if (template.kind !== "any" && template.kind !== input.kind) invalid();
+      return { operation, title: string(input.title, 200), sourceUrl: string(input.sourceUrl, 2048, true), kind: input.kind, ...(input.templateId === undefined ? {} : { templateId }), ...(input.applyIntentId === undefined ? {} : { applyIntentId: string(input.applyIntentId) }) };
     }
   }
 }

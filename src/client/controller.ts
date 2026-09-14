@@ -31,7 +31,7 @@ export function resolveCurrentSession(service: unknown): SessionTarget | undefin
   const current = sessions.list.getSnapshot().current;
   return current ? sessions.binding(current)?.session : undefined;
 }
-export type CreateInput = { title: string; sourceUrl: string; kind: "paper" | "article" };
+export type CreateInput = { title: string; sourceUrl: string; kind: "paper" | "article"; templateId?: import("../domain/articleTemplates.ts").ArticleTemplateId };
 export type CreationPreview = { intent: ActionIntent; summary: string[] };
 export type WorkflowImportState = { kind: WorkflowImportKind; artifact: ArtifactRef; preview: WorkflowImportPreview | null };
 export type LeaveRequest = { kind: "close" | "discard" | "navigate" } | { kind: "select"; contentRef: ContentRef };
