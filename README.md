@@ -38,6 +38,10 @@ AI 参与整理应在文章中明确披露。模型名称不是默认必填的�
 重复提交。可复用经验进入工作流文档，私有执行记录不随源码公开。
 详见 [AI 整理与工作流公开](docs/ai-assisted-workflow.md)。
 
+论文与微信解读索引：[Awesome AI Paper Notes](https://github.com/Harzva/awesome-ai-paper-notes)。
+目录按 CVPR、AAAI、TPAMI、Nature 系列组织，缺失公开链接不等于文章未发表；
+它是独立的公开内容项目，不会随插件安装自动导入或发布。
+
 ## 开发
 
 需要 Node.js `>=22.19.0` 和 pnpm `10.16.1`。

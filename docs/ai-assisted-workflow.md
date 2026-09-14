@@ -53,6 +53,11 @@ Agent 可用 `wemedia_article_templates` 获取同源模板列表，再在
 只导出公开字段，临时预览地址、账号参数、内部任务记录和素材路径不得公开。
 目录链接的字符串校验不等于网页可访问，更不等于公众号手机端可以点击。
 
+公开目录示例：[Awesome AI Paper Notes](https://github.com/Harzva/awesome-ai-paper-notes)。
+其生成器只处理公开元数据与合集稿，不绕过工作台的修订、审批和发布流程。
+安装插件包后，隔离验证配置应更新 bundle 已声明的 `dsh-wemedia-workbench`
+条目，不再插入同包的第二个条目；不同 loader ID 并不代表可以重复注册同一服务。
+
 ## 工作台应保留什么
 
 运行状态与可复用经验分开保存：
