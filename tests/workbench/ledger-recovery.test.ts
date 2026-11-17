@@ -194,12 +194,14 @@ describe("ledger-first workbench result recovery", () => {
     const original = h.f.adapter.run.bind(h.f.adapter);
     const run = vi.spyOn(h.f.adapter, "run").mockImplementationOnce(async (...args) => {
       const result = await original(...args); delete result.verifiedAt;
-      return { ...result, ok: false, code: "WECHAT_READBACK_MISMATCH", reconcileRequired: true };
+      return { ...result, ok: false, code: "WECHAT_READBACK_MISMATCH", reconcileRequired: true, failedCheckCodes: ["content_text_matches"] };
     });
     const unconfirmed = await execute(h, h.document, "update_draft", target);
     const proof = await event(h, unconfirmed);
     expect(unconfirmed).toMatchObject({ status: "reconcile_required", resultCode: "WECHAT_READBACK_MISMATCH", resultEventId: proof.eventId });
     expect(proof.remote!.workbenchRecovery).toMatchObject({ status: "reconcile_required", targetRef: target.targetRef });
+    expect(proof.evidence.failedCheckCodes).toEqual(["content_text_matches"]);
+    expect(proof.remote).not.toHaveProperty("failedCheckCodes");
     expect((await h.jobs.loadAll()).find(job => job.jobId === unconfirmed.jobId)).toEqual(unconfirmed);
     const pendingTarget = (await h.documents.read(h.document.contentRef)).targets[0]!;
     expect(pendingTarget.verifiedRevision).toBe("");
@@ -211,12 +213,14 @@ describe("ledger-first workbench result recovery", () => {
     await h.service.dispose(); run.mockClear();
     const reloaded = build(h.f); await reloaded.service.initialize();
     expect(await reloaded.service.settle(unconfirmed.jobId)).toEqual(unconfirmed);
+    expect((await event(reloaded, unconfirmed)).evidence.failedCheckCodes).toEqual(["content_text_matches"]);
     expect((await reloaded.documents.read(h.document.contentRef)).targets).toEqual([verifiedTarget]);
     expect(value<WorkbenchSnapshot>(await reloaded.service.request({ operation: "snapshot" }, user)).settings.issues).toEqual([]);
     expect(run).not.toHaveBeenCalled();
     await reloaded.service.dispose();
     const twice = build(h.f); await twice.service.initialize();
     expect(await twice.service.settle(unconfirmed.jobId)).toEqual(unconfirmed);
+    expect((await event(twice, unconfirmed)).evidence.failedCheckCodes).toEqual(["content_text_matches"]);
     expect((await twice.documents.read(h.document.contentRef)).targets).toEqual([verifiedTarget]);
     expect(value<WorkbenchSnapshot>(await twice.service.request({ operation: "snapshot" }, user)).settings.issues).toEqual([]);
     expect(run).not.toHaveBeenCalled();

@@ -1,4 +1,7 @@
-import type { ClientContext } from "@deepseek-ai/dsh-client-runtime/client";
+import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-api-gateway/client";
+import type {} from "@deepseek-ai/dsh-api-session-controller/client";
+import type {} from "@deepseek-ai/dsh-client-ui-session/client";
 import type {} from "@deepseek-ai/dsh-client-connection/client";
 import React from "react";
 import { TYPERT_REMOTE } from "../remote/descriptors.ts";
@@ -10,8 +13,8 @@ import { ContentNavigation } from "./content-navigation.tsx";
 export const name = "dsh-wemedia-workbench";
 export const inject = ["slots", "remote"] as const;
 
-export function apply(ctx: ClientContext): void {
-  const controller = new WorkbenchController(() => resolveCurrentSession(ctx.get("sessions")));
+export function apply(ctx: Context): void {
+  const controller = new WorkbenchController(() => resolveCurrentSession(ctx.get("uiSession"), ctx.get("sessions")));
   ctx.effect(() => () => controller.dispose());
   // A mounted namespace is its own Cordis service, not a property covered by
   // inject: ["remote"]. Wait additively after requesting its native mount.

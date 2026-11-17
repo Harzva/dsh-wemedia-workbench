@@ -9,7 +9,7 @@ import { getPlatformCatalog } from "../../src/domain/platformCatalog.ts";
 import type { WorkbenchValue } from "../../src/domain/workbench.ts";
 
 const require = createRequire(import.meta.url);
-const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-runtime"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
+const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-ui-primitives"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 

@@ -14,7 +14,7 @@ import { createSetupViewController } from "../../src/client/setup-view.tsx";
 import { readPublicationAsset } from "../../src/client/publication-media.tsx";
 
 const require = createRequire(import.meta.url);
-const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-runtime"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
+const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-ui-primitives"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
 const ref = "wmc:33333333-3333-4333-8333-333333333333" as const;
 const asset = (id = "asset:a", source: PublicationAsset["source"] = "draft"): PublicationAsset => ({ itemId: id, source, revisionDigest: "sha256:asset", caption: "原始说明", title: "第一张图片", kind: "image", mediaType: "image/png", bytes: 3 });
 const draft = (): PublicationDraft => ({ schemaVersion: "wemedia.publication-draft/v1", contentRef: ref, publicationType: "image_text", title: "图文测试稿", body: "原始正文", media: [asset()], coverItemId: "asset:a", channels: ["xiaohongshu"], revisionDigest: "sha256:original", createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z", readOnlySource: false, issues: [], publications: [] });

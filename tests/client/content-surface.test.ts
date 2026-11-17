@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { attachContentSurface } from "../../src/client/content-surface.ts";
 
-/** Minimal DOM fixture: exercises ownership/lifecycle without adding a browser dependency. */
+/** Minimal 0.2 DOM fixture: exercises ownership/lifecycle without a browser dependency. */
 class TestElement {
   children: TestElement[] = [];
   parentElement: TestElement | null = null;
@@ -67,7 +67,7 @@ class TestDocument {
   createElement(name: string): TestElement { return new TestElement(name.toUpperCase(), this); }
 }
 
-function fixture() {
+function fixture(options: { leading?: boolean; topStrip?: boolean; panelList?: boolean } = {}) {
   const doc = new TestDocument();
   const node = (name = "div", className = "", parent?: TestElement): TestElement => {
     const element = doc.createElement(name); element.className = className; parent?.appendChild(element); return element;
@@ -76,22 +76,26 @@ function fixture() {
   const frame = node("div", "pI_x6G_frame", container);
   const sidebar = node("div", "pI_x6G_sidebarCol", frame);
   const nativeCenter = node("div", "pI_x6G_centerCol", frame);
-  const details = node("div", "pI_x6G_detailsCol", frame);
-  const overlay = node("div", "", frame); overlay.setAttribute("data-shell-overlay", "true");
+  const rightbar = node("div", "pI_x6G_rightbarCol", frame);
+  const overlay = node("div", "pI_x6G_overlayLayer", frame); overlay.setAttribute("data-shell-overlay", "true");
   const anchor = node("span", "", overlay);
+  const leading = options.leading ? node("div", "pI_x6G_leadingSeat", frame) : undefined;
+  leading?.setAttribute("data-shell-leading", "true");
   const sidebarBoundary = node("div", "", sidebar);
   sidebarBoundary.setAttribute("data-slot", "sidebar");
   sidebarBoundary.setAttribute("style", "display: contents;");
   const sidebarRoot = node("div", "hHd-Xa_root", sidebarBoundary);
+  const topStrip = options.topStrip ? node("div", "hHd-Xa_topStrip", sidebarRoot) : undefined;
   const logo = node("div", "hHd-Xa_logoRow", sidebarRoot);
   const brand = node("button", "hHd-Xa_brand", logo);
   const newSession = node("button", "hHd-Xa_newSession", sidebarRoot);
+  const panelList = options.panelList === false ? undefined : node("nav", "hHd-Xa_panelList", sidebarRoot);
   const region = node("div", "hHd-Xa_regionArea", sidebarRoot);
   const foot = node("div", "hHd-Xa_footArea", sidebarRoot);
   const conversation = node("section", "", nativeCenter);
   const editor = node("textarea", "", conversation);
   editor.textContent = "unsent native draft";
-  return { doc, node, container, frame, sidebar, sidebarBoundary, sidebarRoot, logo, brand, newSession, region, foot, nativeCenter, details, overlay, anchor, conversation, editor };
+  return { doc, node, container, frame, sidebar, sidebarBoundary, sidebarRoot, topStrip, logo, brand, newSession, panelList, region, foot, nativeCenter, rightbar, leading, overlay, anchor, conversation, editor };
 }
 
 const element = (node: TestElement): HTMLElement => node as unknown as HTMLElement;
@@ -99,7 +103,7 @@ const fake = (node: HTMLElement): TestElement => node as unknown as TestElement;
 
 beforeEach(() => { TestObserver.instances = []; });
 
-describe("rc.2 content surface DOM ownership", () => {
+describe("0.2.0-rc.2 content surface DOM ownership", () => {
   it("adds local portal mounts and preserves every native node and draft through open/close/unload", () => {
     const f = fixture(); const other = fixture();
     f.nativeCenter.setAttribute("style", "color: red");
@@ -115,7 +119,7 @@ describe("rc.2 content surface DOM ownership", () => {
     surface!.setActive(true);
     expect(f.frame.getAttribute("data-wemedia-content-active")).toBe(f.frame.getAttribute("data-wemedia-content-surface"));
     expect(other.frame.attributes.size).toBe(0);
-    expect(other.sidebarRoot.children).toHaveLength(4);
+    expect(other.sidebarRoot.children).toHaveLength(5);
     surface!.setActive(false);
     expect(f.frame.getAttribute("data-wemedia-content-active")).toBeNull();
     surface!.dispose(); surface!.dispose();
@@ -151,12 +155,15 @@ describe("rc.2 content surface DOM ownership", () => {
     expect(f.frame.getAttribute("data-wemedia-library-open")).toBe("another owner");
   });
 
-  it.each(["unknown class", "column order", "duplicate region", "duplicate boundary", "changed boundary seat", "changed boundary display", "missing boundary", "wrong anchor", "disconnected"])("fails closed for %s without touching the app", reason => {
+  it.each(["unknown class", "column order", "duplicate rightbar", "duplicate region", "duplicate panel list", "duplicate boundary", "unknown frame child", "changed boundary seat", "changed boundary display", "missing boundary", "wrong anchor", "disconnected"])("fails closed for %s without touching the app", reason => {
     const f = fixture();
     if (reason === "unknown class") f.sidebarRoot.className = "future_root";
-    if (reason === "column order") f.frame.insertBefore(f.details, f.nativeCenter);
+    if (reason === "column order") f.frame.insertBefore(f.rightbar, f.nativeCenter);
+    if (reason === "duplicate rightbar") f.node("div", "pI_x6G_rightbarCol", f.frame);
     if (reason === "duplicate region") f.node("div", "hHd-Xa_regionArea", f.sidebarRoot);
+    if (reason === "duplicate panel list") f.node("nav", "hHd-Xa_panelList", f.sidebarRoot);
     if (reason === "duplicate boundary") f.node("div", "", f.sidebar).setAttribute("data-slot", "sidebar");
+    if (reason === "unknown frame child") f.node("div", "future_frame_seat", f.frame);
     if (reason === "changed boundary seat") f.sidebarBoundary.setAttribute("data-slot", "future-sidebar");
     if (reason === "changed boundary display") f.sidebarBoundary.setAttribute("style", "display: block;");
     if (reason === "missing boundary") f.sidebar.appendChild(f.sidebarRoot);
@@ -225,6 +232,22 @@ describe("rc.2 content surface DOM ownership", () => {
     surface.dispose();
     expect(f.sidebarBoundary.getAttribute("style")).toBe("display: contents;");
     expect(f.sidebarBoundary.getAttribute("data-slot")).toBe("sidebar");
+  });
+
+  it("accepts the optional 0.2 top strip and shell-leading seat while scoping collapsed/mobile rules", () => {
+    const f = fixture({ leading: true, topStrip: true, panelList: false });
+    f.frame.setAttribute("data-sidebar-collapsed", "true");
+    const surface = attachContentSurface(element(f.anchor))!;
+    surface.setActive(true);
+    const css = f.frame.children.find(child => child.tagName === "STYLE")!.textContent;
+    expect(surface.isAvailable()).toBe(true);
+    expect(css).toContain('> .pI_x6G_sidebarCol > [data-slot="sidebar"] > .hHd-Xa_root > .hHd-Xa_panelList');
+    expect(css).toContain('> .pI_x6G_rightbarCol');
+    expect(css).toContain('> .pI_x6G_leadingSeat');
+    expect(css).toContain("[data-sidebar-collapsed]");
+    expect(f.leading?.parentElement).toBe(f.frame);
+    surface.dispose();
+    expect(f.leading?.parentElement).toBe(f.frame);
   });
 
   it("withdraws after an attached Slot boundary's contract changes", () => {

@@ -1,4 +1,5 @@
 import Schema from "@deepseek-ai/schemastery";
+import type { Volatile } from "@deepseek-ai/cosmokit";
 
 import { CONFIG_SCHEMA_VERSION } from "./domain/config.ts";
 import type { ConfigV1 } from "./domain/config.ts";
@@ -34,12 +35,18 @@ const ScanSchema = Schema.object({
   maxFileBytes: Schema.number().min(1_024).max(16_777_216).default(1_048_576),
 }) as Schema<ConfigV1["scan"]>;
 
-export const Config: Schema<ConfigV1> = Schema.object({
+export type RuntimeConfig = Omit<ConfigV1, "roots" | "writeRootEnabled" | "scan"> & {
+  roots: Volatile<ConfigV1["roots"]>;
+  writeRootEnabled: Volatile<boolean>;
+  scan: Volatile<ConfigV1["scan"]>;
+};
+
+export const Config: Schema<ConfigV1, RuntimeConfig> = Schema.object({
   schemaVersion: Schema.const(CONFIG_SCHEMA_VERSION).default(CONFIG_SCHEMA_VERSION),
   dataDir: Schema.string().default(""),
-  roots: Schema.array(RootConfigSchema).default([]),
+  roots: Schema.array(RootConfigSchema).default([]).volatile(),
   writeRoot: Schema.string(),
-  writeRootEnabled: Schema.boolean().default(true),
+  writeRootEnabled: Schema.boolean().default(true).volatile(),
   publicationSources: Schema.union([Schema.const(undefined), Schema.object({
     workspaceRoot: Schema.string().required(),
     ledgerPath: Schema.string(),
@@ -50,8 +57,17 @@ export const Config: Schema<ConfigV1> = Schema.object({
   scan: ScanSchema.default({
     debounceMs: 500,
     maxFileBytes: 1_048_576,
-  }),
-}) as Schema<ConfigV1>;
+  }).volatile(),
+}) as Schema<ConfigV1, RuntimeConfig>;
+
+export function snapshotRuntimeConfig(config: RuntimeConfig): ConfigV1 {
+  return {
+    ...config,
+    roots: structuredClone(config.roots.get()) as ConfigV1["roots"],
+    writeRootEnabled: config.writeRootEnabled.get(),
+    scan: structuredClone(config.scan.get()) as ConfigV1["scan"],
+  };
+}
 
 export function createDefaultConfig(): ConfigV1 {
   return {

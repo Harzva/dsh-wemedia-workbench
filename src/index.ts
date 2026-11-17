@@ -1,9 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
-import { deepEqualJson, installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+import type {} from "@deepseek-ai/cordis-plugin-loader";
+import type {} from "@deepseek-ai/dsh-settings";
+import { isDeepStrictEqual } from "node:util";
 
-import { Config } from "./config.ts";
+import { Config, snapshotRuntimeConfig } from "./config.ts";
 import { WorkbenchFault } from "./domain/workbench.ts";
-import type { ConfigV1 } from "./config.ts";
+import type { ConfigV1, RuntimeConfig } from "./config.ts";
 import { composeWorkbench } from "./host/compose.ts";
 import { NativeWorkbenchApprovals } from "./host/approval.ts";
 import { registerWorkbenchTools } from "./host/tools.ts";
@@ -13,11 +15,10 @@ export const name = "dsh-wemedia-workbench";
 export { Config };
 export type { ConfigV1 as ConfigType } from "./config.ts";
 
-async function applyRuntime(ctx: Context, config: ConfigV1): Promise<void> {
+async function applyRuntime(ctx: Context, config: ConfigV1, ns: string, source: () => ConfigV1): Promise<void> {
   const approvals = new NativeWorkbenchApprovals(ctx);
-  const ns = settingsNamespace(name);
   const workbench = await composeWorkbench(config, approvals, {
-    getConfig: () => (ctx.get("settings")?.get(ns) as ConfigV1 | undefined) ?? config,
+    getConfig: source,
     async applyConfig(next) {
       const settings = ctx.get("settings");
       if (!settings?.writable) throw new WorkbenchFault("SETUP_NATIVE_UNAVAILABLE", "当前原生设置不可写，请通过 DSH 插件配置设置目录");
@@ -38,18 +39,20 @@ async function applyRuntime(ctx: Context, config: ConfigV1): Promise<void> {
   });
 }
 
-export function apply(ctx: Context, config: ConfigV1): void {
-  let current = config;
-  let source = () => config;
+export function apply(ctx: Context, config: RuntimeConfig): void {
+  const ns = ctx.fiber.entry?.options.id ?? name;
+  const source = () => snapshotRuntimeConfig(config);
+  let current = source();
   let runtime: ReturnType<Context["plugin"]> | undefined;
   let pending = Promise.resolve();
   let stopped = false;
   ctx.effect(() => () => { stopped = true; });
-  // Reuse the host settings consumer and Cordis's generation teardown/reload.
-  // Never patch a profile, preset or the process-wide PTC presentation mode.
-  installSettingsSection(ctx, settingsNamespace(name), Config, config, {
-    setSource(next) { source = next; },
-    onChange() {
+  ctx.inject(["settings"], child => {
+    child.effect(() => child.settings.configure({ auto: false }, ctx.fiber));
+  });
+  // The Loader commits volatile references before this event. Reload only our
+  // child generation so filesystem watchers and in-flight work are disposed.
+  ctx.on("loader/volatile-update", () => {
       // Updating a loading Cordis fiber can leave its in-flight apply on the
       // old config. Serialize changes behind initialization and read the
       // newest source only after that generation has settled.
@@ -59,18 +62,14 @@ export function apply(ctx: Context, config: ConfigV1): void {
         await mounted.await().catch(() => {});
         if (stopped) return;
         const next = source();
-        if (deepEqualJson(current, next)) return;
+        if (isDeepStrictEqual(current, next)) return;
         await mounted.update(next, true);
       }).catch(() => {
         if (!stopped) ctx.logger(name).warn("WeMedia settings reload failed; inspect the plugin configuration before retrying.");
       });
-    },
   });
-  // Install the settings consumer first: its initial source callback precedes
-  // the child runtime's apply. A missing provider leaves the composition source.
-  runtime = ctx.plugin({ name: `${name}/runtime`, Config, apply(runtimeContext) {
-    const next = source();
+  runtime = ctx.plugin({ name: `${name}/runtime`, apply(runtimeContext: Context, next: ConfigV1) {
     current = next;
-    return applyRuntime(runtimeContext, next);
-  } }, config);
+    return applyRuntime(runtimeContext, next, ns, source);
+  } }, current);
 }

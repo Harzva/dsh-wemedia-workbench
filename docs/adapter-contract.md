@@ -96,6 +96,12 @@ Queue/Detail/Channel/Job/Approval/Settings 使用同一套状态语义，不分�
 
 微信 bridge、旧工作流脚本、生产 profile 和账号写入均不随本项目分发；接入时必须保持旧内容根只读，并为任何远端动作单独声明批准与回读证据。
 
+`WECHAT_READBACK_MISMATCH` 的诊断只从完整的二十项布尔 `checks` 中提取失败项，
+按固定白名单顺序写入私有账本 `evidence.failedCheckCodes`。缺失、未知键或非布尔检查
+不会生成诊断，也不会变为成功。账本兼容不含该字段的旧事件；不回填过去丢失的检查项，
+不保存原始响应或远端正文，不将诊断混入目标缓存。后续成功的只读 `sync` 是独立核验
+证据，不能改写原更新 Job 的 `reconcile_required` 历史。
+
 ## 8. 原工作流复用合约
 
 Agent、PTC 和 Client 共享 `ai_inspect`、`ai_preview`、`preview_workflow_import`、`apply_workflow_import` 用例；不复制作者/发布器逻辑，不另设模型账户。旧文件只读，本地导入只写工作台 store；没有给旧发布入口增加默认行为。

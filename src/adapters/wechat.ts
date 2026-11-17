@@ -7,14 +7,9 @@ import { BRIDGE_SCHEMA } from "../domain/workbench.ts";
 import type { AiWorkflowResult, ArticleDocument, DraftTarget } from "../domain/workbench.ts";
 import type { CommandSpec, ProcessRunner } from "../ports/process.ts";
 import type { WorkbenchAdapter, WorkbenchRemoteResult } from "../ports/workbench.ts";
+import { WECHAT_READBACK_CHECKS } from "../domain/wechatReadback.ts";
 
-export const WECHAT_READBACK_CHECKS = [
-  "present", "title_matches", "topic_prefix_present", "digest_matches", "digest_plain_text",
-  "content_text_matches", "result_table_count_matches", "result_table_cells_match", "content_deep",
-  "image_count_matches", "images_uploaded", "images_match_approved_uploads", "image_upload_map_count_matches",
-  "source_url_matches", "official_page_url_visible", "official_pdf_url_visible", "code_url_visible_or_not_required",
-  "cover_present", "developer_notes_absent", "local_paths_absent",
-] as const;
+export { WECHAT_READBACK_CHECKS } from "../domain/wechatReadback.ts";
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/u;
 const CODE = /^[A-Z][A-Z0-9_]{1,80}$/u;
 const ACCOUNT = /^wechat-account:[a-f0-9]{32}$/u;
@@ -26,6 +21,7 @@ interface Envelope {
   issues: Array<{ status: "pass" | "warn" | "block"; code: string }>;
   uploads: NonNullable<WorkbenchRemoteResult["uploads"]>;
   reconcileRequired: boolean;
+  failedCheckCodes?: WorkbenchRemoteResult["failedCheckCodes"];
   identityVerified?: true;
   mode?: AiWorkflowResult["mode"];
   sourceKind?: AiWorkflowResult["sourceKind"];
@@ -98,6 +94,13 @@ export function decodeWechatBridge(text: string, operation: Operation, revision?
   if (result.ok && (remote || operation === "sync")) {
     if (!result.remoteId || !result.verifiedAt || !isJsonObject(raw.checks) || Object.keys(raw.checks).length !== WECHAT_READBACK_CHECKS.length || !WECHAT_READBACK_CHECKS.every(key => raw.checks && isJsonObject(raw.checks) && raw.checks[key] === true)) return { ...result, ok: false, code: "WECHAT_READBACK_INCOMPLETE", reconcileRequired: remote };
     if (remote && raw.draftMode !== (operation === "draft_create" ? "created" : "updated")) return reject("WECHAT_DRAFT_MODE_MISMATCH", true);
+  }
+  if (!result.ok && result.code === "WECHAT_READBACK_MISMATCH" && (remote || operation === "sync")) {
+    const checks = raw.checks;
+    if (isJsonObject(checks) && Object.keys(checks).length === WECHAT_READBACK_CHECKS.length && WECHAT_READBACK_CHECKS.every(key => typeof checks[key] === "boolean")) {
+      const failed = WECHAT_READBACK_CHECKS.filter(key => checks[key] === false);
+      if (failed.length) result.failedCheckCodes = failed;
+    }
   }
   return result;
 }
@@ -181,6 +184,6 @@ export class WechatAdapter implements WorkbenchAdapter {
     const operation = action === "create_draft" ? "draft_create" : action === "update_draft" ? "draft_update" : "sync";
     const result = await this.invoke(operation, document, signal, target);
     const issues: GateIssue[] = result.issues.map(issue => ({ ...issue, gateId: "wechat-native", version: "1", safeMessage: issue.status === "pass" ? "微信检查通过" : "微信检查需要处理", evidenceRefs: [], inputDigest: document.revisionDigest }));
-    return { ok: result.ok, code: result.code, phase: action === "sync" ? "sync" : "draft", channel: "wechat", sideEffect: action === "sync" ? "read" : "remote_draft", artifacts: [], issues, retryable: false, reconcileRequired: result.reconcileRequired, uploads: result.uploads, ...(result.remoteId ? { remote: { remoteId: result.remoteId } } : {}), ...(result.verifiedAt ? { verifiedAt: result.verifiedAt } : {}), ...(result.revisionDigest ? { revisionDigest: result.revisionDigest } : {}) };
+    return { ok: result.ok, code: result.code, phase: action === "sync" ? "sync" : "draft", channel: "wechat", sideEffect: action === "sync" ? "read" : "remote_draft", artifacts: [], issues, retryable: false, reconcileRequired: result.reconcileRequired, uploads: result.uploads, ...(result.failedCheckCodes ? { failedCheckCodes: result.failedCheckCodes } : {}), ...(result.remoteId ? { remote: { remoteId: result.remoteId } } : {}), ...(result.verifiedAt ? { verifiedAt: result.verifiedAt } : {}), ...(result.revisionDigest ? { revisionDigest: result.revisionDigest } : {}) };
   }
 }

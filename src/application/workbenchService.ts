@@ -871,6 +871,9 @@ export class WorkbenchService {
     if (!this.options.ledger) return;
     const status = context?.status ?? (remote?.ok === false ? "failed" : "succeeded");
     const candidate: LedgerEvent = { schemaVersion: LEDGER_EVENT_SCHEMA_VERSION, eventId: this.options.ids.opaqueId("event"), eventKey: this.eventKey(job), occurredAt: this.options.clock.nowIso(), contentRef: job.contentRef, ...(job.channel ? { channel: job.channel } : {}), jobId: job.jobId, action: job.action, sideEffect: job.sideEffect, outcome: status === "cancelled" ? "cancelled" : status === "timed_out" ? "timed_out" : status === "succeeded" ? "succeeded" : "failed", artifactDigests: context ? [...new Set([this.options.hasher.digest(context.document.html), ...context.document.assets.map(asset => asset.digest)])] : [], evidence: { adapter: remote ? "md2wechat-bridge" : "wemedia-local", adapterVersion: "1.0.0", code: remote?.code ?? "LOCAL_ACTION_COMPLETED" } };
+    if (remote?.ok === false && remote.code === "WECHAT_READBACK_MISMATCH" && remote.failedCheckCodes?.length) {
+      candidate.evidence.failedCheckCodes = [...remote.failedCheckCodes];
+    }
     if (publication) {
       candidate.artifactDigests = [...new Set([publication.revisionDigest, ...publication.media.map(asset => asset.revisionDigest)])];
       candidate.remote = { localPublicationRecovery: { schemaVersion: "wemedia.local-publication-result/v1", intentId: job.intentId, inputDigest: job.inputDigest, revisionDigest: publication.revisionDigest, publicationType: publication.publicationType } };

@@ -79,6 +79,9 @@ headings as well as prose; do not classify a heading from its tag or isolated
 keywords. A structurally valid report is not proof that its sources support
 its claims. In particular, distinguish human baselines, model stages, absolute
 values, percentage points and relative changes before comparing numbers.
+Derive coverage and unchanged-paragraph totals from the inspected arrays.
+Copied prose totals can be wrong even when every structured row is correct;
+correcting a report requires native re-registration of its new artifact digest.
 
 An editorial-keyword hit is not by itself proof of leaked production notes.
 Reader-facing result evidence and descriptions of a model's internal
@@ -94,6 +97,19 @@ mobile evidence is an actual revision-bound PNG, not a fabricated JSON report.
 Verify the actual page width after setting a mobile viewport. Check every
 image loaded and inspect the full page before capturing evidence. Small paper
 tables need readable explanation; do not claim every original label is legible.
+
+Keep the preview used for mobile evidence immutable and revision-specific.
+Confirm both CSS viewport width and device pixel ratio: a 390 CSS-pixel page
+at DPR 2 produces a 780-pixel image, not the required 390-pixel evidence.
+Capture the full page at DPR 1 and compare PNG height with the observed page
+height. Do not resize a desktop or high-DPR screenshot into passing evidence.
+
+For post-delivery enhancements, a saved local revision does not replace the
+verified remote revision. Preserve the original delivery record and keep a
+separate enhancement checkpoint. Inspect after each save before generating
+paragraph-indexed reports; a document manifest is not an inspection export.
+An unsaved HTML candidate and a registered revision are also different states.
+Reconcile these states before changing models after subscription exhaustion.
 
 ## Crop only when needed
 
@@ -121,6 +137,18 @@ are distinct facts. Verify provider-specific capacity before overriding it.
 When recovery uses a new short-context session, preserve the authorized model,
 workspace, account and approval boundary, then inspect current state again.
 
+A successful small tool call after switching models does not prove the old
+conversation fits the replacement model. If the runtime explicitly reports
+context overflow, reconcile jobs and retire that writer before starting a
+short handoff session. Do not confuse that error with subscription exhaustion.
+
+Keep full paragraph evidence in structured review fields; the review body needs
+only the method, conclusion and exceptions, not another copy of the article.
+Export exact tool results from supported artifacts instead of asking the model
+to reconstruct HTML or embedded images. PTC can retain intermediate results
+outside model context only when the current scope exposes the required tools;
+nested native writes still require their ordinary intents, guards and approval.
+
 ## Treat subscription exhaustion as a checkpoint boundary
 
 Distinguish a transient rate limit from an explicit subscription-window
@@ -135,6 +163,26 @@ route. Keep account and approval settings unchanged during quota recovery.
 Completed local artifacts are not registered reviews until native state confirms
 their current revision and byte digest. Preserve a concise private checkpoint;
 do not put provider responses, account details or private paths in public docs.
+
+## Diagnose readback mismatches before another write
+
+A failed update readback can follow a completed remote write. Preserve the
+original job as reconcile-required, stop subsequent deliveries, and use the
+existing target for a read-only check. Never infer that a retry or a replacement
+draft is needed from an aggregate mismatch code.
+
+Retain only allowlisted failed check names as diagnostic evidence, not raw
+bridge output, article bodies, account IDs or credential-bearing URLs. Text,
+tables, image identity/order, metadata and source checks must remain distinct.
+
+Platforms may unwrap inline anchor tags while retaining their visible text.
+A text comparator must not invent spaces at those tag boundaries. Normalize
+only the demonstrated markup difference; preserve actual text spaces and
+continue rejecting changed words, numbers, table cells and image bindings.
+Prove the correction with failing-then-passing fixtures in an account-free
+copy, reconcile active jobs, and retain the previous integration for rollback.
+A later successful sync is new verification evidence, not a rewrite of the
+earlier failed job or another remote update.
 
 ## Rollout boundary
 

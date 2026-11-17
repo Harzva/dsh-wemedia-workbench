@@ -13,8 +13,12 @@ describe("native Client Remote namespace ownership", () => {
     const ctx = new Context();
     const renderers = new Map<string, () => ReactNode>();
     const call = vi.fn().mockResolvedValue({ ok: true, value: { ok: false, error: { code: "FIXTURE_UNCONFIGURED", safeMessage: "Fixture not configured", retryable: false } } });
+    const unregisterGeneration = vi.fn();
+    const stop = vi.fn();
     class Connection extends Service {
-      readonly rpc = { call };
+      readonly rpc = { call, open: vi.fn() };
+      readonly registerGenerationSource = vi.fn(() => unregisterGeneration);
+      readonly start = vi.fn(() => ({ stop }));
       constructor(owner: Context) { super(owner, "connection"); }
     }
     class Slots extends Service {
@@ -41,5 +45,7 @@ describe("native Client Remote namespace ownership", () => {
       expect(renderers.size).toBe(0);
       expect(controller.getSnapshot().open).toBe(false);
     } finally { await ctx.fiber.dispose(); }
+    expect(unregisterGeneration).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
   });
 });

@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import Schema from "@deepseek-ai/schemastery";
 import { describe, expect, it } from "vitest";
 
-import { Config, CONFIG_SCHEMA_VERSION, createDefaultConfig } from "../../src/config.ts";
-import type { ConfigV1 } from "../../src/config.ts";
+import { Config, CONFIG_SCHEMA_VERSION, createDefaultConfig, snapshotRuntimeConfig } from "../../src/config.ts";
+import type { RuntimeConfig } from "../../src/config.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const packageManifest = JSON.parse(
@@ -73,12 +73,12 @@ describe("package identity and DSH contracts", () => {
     for (const [dependency, version] of Object.entries(peers)) {
       expect(development[dependency], dependency).toBe(version);
     }
-    expect(development["@deepseek-ai/dsh"]).toBe("0.1.1-rc.2");
-    expect(peers["@deepseek-ai/cordis"]).toBe("4.0.1");
+    expect(development["@deepseek-ai/dsh"]).toBe("0.2.0-rc.2");
+    expect(peers["@deepseek-ai/cordis"]).toBe("4.0.4");
     expect(peers.react).toBe("18.3.1");
     for (const [dependency, version] of Object.entries(peers)) {
       if (dependency.startsWith("@deepseek-ai/dsh-")) {
-        expect(version, dependency).toBe("0.1.1-rc.2");
+        expect(version, dependency).toBe("0.2.0-rc.2");
       }
     }
   });
@@ -94,7 +94,7 @@ describe("package identity and DSH contracts", () => {
 
 describe("safe ConfigV1 baseline", () => {
   it("resolves to an empty local-only configuration", () => {
-    const resolved = Schema.resolve({}, Config, { autofix: true })[0] as ConfigV1;
+    const resolved = snapshotRuntimeConfig(Schema.resolve({}, Config, { autofix: true })[0] as RuntimeConfig);
     expect(resolved).toEqual(createDefaultConfig());
     expect(resolved.schemaVersion).toBe(CONFIG_SCHEMA_VERSION);
     expect(resolved.roots).toEqual([]);
@@ -126,7 +126,7 @@ describe("built and packed artifact", () => {
     const cache = mkdtempSync(resolve(tmpdir(), "wm-pack-cache-"));
     let output: string;
     try {
-      output = execFileSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json", "--cache", cache],
+      output = execFileSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--no-foreground-scripts", "--json", "--cache", cache],
         { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     } finally { rmSync(cache, { recursive: true, force: true }); }
     const metadata = JSON.parse(output) as Array<{ files?: Array<{ path: string }> }>;

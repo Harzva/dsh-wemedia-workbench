@@ -1,5 +1,5 @@
 /**
- * Version-scoped layout adapter for the installed DSH 0.1.1-rc.2 client.
+ * Version-scoped layout adapter for the installed DSH 0.2.0-rc.2 client.
  * This is a DOM compatibility layer, not a first-level navigation Slot.
  * It owns only three portal mounts, one style element, and private attributes;
  * the native sidebar and conversation React trees stay in their original seats.
@@ -27,11 +27,16 @@ const classes = {
   frame: "pI_x6G_frame",
   sidebar: "pI_x6G_sidebarCol",
   center: "pI_x6G_centerCol",
-  details: "pI_x6G_detailsCol",
+  rightbar: "pI_x6G_rightbarCol",
+  overlay: "pI_x6G_overlayLayer",
+  leadingSeat: "pI_x6G_leadingSeat",
+  handle: "pI_x6G_handle",
   sidebarRoot: "hHd-Xa_root",
+  topStrip: "hHd-Xa_topStrip",
   logo: "hHd-Xa_logoRow",
   brand: "hHd-Xa_brand",
   newSession: "hHd-Xa_newSession",
+  panelList: "hHd-Xa_panelList",
   region: "hHd-Xa_regionArea",
   foot: "hHd-Xa_footArea",
 } as const;
@@ -39,6 +44,7 @@ const scopeAttribute = "data-wemedia-content-surface";
 const activeAttribute = "data-wemedia-content-active";
 const libraryAttribute = "data-wemedia-library-open";
 const mountAttribute = "data-wemedia-content-mount";
+const styleAttribute = "data-wemedia-content-style";
 const attachedFrames = new WeakSet<HTMLElement>();
 let nextSurface = 0;
 
@@ -53,13 +59,29 @@ interface HostParts {
   region: HTMLElement;
   foot: HTMLElement;
   center: HTMLElement;
-  details: HTMLElement;
+  rightbar: HTMLElement;
 }
 
 /** Match only direct children of the exact ancestor established by our anchor. */
 function direct(parent: HTMLElement, className: string): HTMLElement | undefined {
   const matches = Array.from(parent.children).filter(child => child.classList.contains(className));
   return matches.length === 1 ? matches[0] as HTMLElement : undefined;
+}
+
+function matches(parent: HTMLElement, className: string): HTMLElement[] {
+  return Array.from(parent.children).filter(child => child.classList.contains(className)) as HTMLElement[];
+}
+
+/** Check the order of known nodes while allowing version-scoped optional seats. */
+function ordered(parent: HTMLElement, children: Array<HTMLElement | undefined>): boolean {
+  let previous = -1;
+  for (const child of children) {
+    if (!child) continue;
+    const index = Array.from(parent.children).indexOf(child);
+    if (index < 0 || index <= previous) return false;
+    previous = index;
+  }
+  return true;
 }
 
 function discover(anchor: HTMLElement): HostParts | undefined {
@@ -69,11 +91,24 @@ function discover(anchor: HTMLElement): HostParts | undefined {
   if (!overlay || !frame || !frame.classList.contains(classes.frame)) return;
   const sidebar = direct(frame, classes.sidebar);
   const center = direct(frame, classes.center);
-  const details = direct(frame, classes.details);
-  if (!sidebar || !center || !details) return;
-  // The audited AppFrame fixes the three columns and overlay in this order.
-  if (frame.children[0] !== sidebar || frame.children[1] !== center
-    || frame.children[2] !== details || frame.children[3] !== overlay) return;
+  const rightbar = direct(frame, classes.rightbar);
+  const frameOverlay = direct(frame, classes.overlay);
+  if (!sidebar || !center || !rightbar || !frameOverlay || frameOverlay !== overlay) return;
+  // The audited 0.2 AppFrame fixes the three columns and overlay in this order.
+  if (!ordered(frame, [sidebar, center, rightbar, overlay])) return;
+  const leadingSeats = matches(frame, classes.leadingSeat);
+  const handles = matches(frame, classes.handle);
+  const ownedStyles = Array.from(frame.children).filter(child =>
+    child.tagName === "STYLE" && child.getAttribute(styleAttribute) !== null) as HTMLElement[];
+  if (leadingSeats.length > 1 || ownedStyles.length > 1) return;
+  const knownFrameChildren = new Set<HTMLElement>([
+    sidebar, center, rightbar, overlay, ...leadingSeats, ...handles, ...ownedStyles,
+  ]);
+  // Do not infer a future frame from geometry or silently accept an unknown seat.
+  if (Array.from(frame.children).some(child => !knownFrameChildren.has(child as HTMLElement))) return;
+  const frameChildren = Array.from(frame.children);
+  const overlayIndex = frameChildren.indexOf(overlay);
+  if ([...leadingSeats, ...handles, ...ownedStyles].some(child => frameChildren.indexOf(child) <= overlayIndex)) return;
   // The native SlotEntryBoundary contributes this display:contents wrapper;
   // it is part of the renderer contract, not a competing sidebar occupant.
   const boundaries = Array.from(sidebar.children).filter(child => child.getAttribute("data-slot") === "sidebar");
@@ -82,15 +117,26 @@ function discover(anchor: HTMLElement): HostParts | undefined {
     || !/(?:^|;)\s*display\s*:\s*contents\s*(?:;|$)/.test(sidebarBoundary.getAttribute("style") ?? "")) return;
   const sidebarRoot = direct(sidebarBoundary, classes.sidebarRoot);
   if (!sidebarRoot) return;
+  const topStrips = matches(sidebarRoot, classes.topStrip);
   const logo = direct(sidebarRoot, classes.logo);
   const newSession = direct(sidebarRoot, classes.newSession);
+  const panelLists = matches(sidebarRoot, classes.panelList);
   const region = direct(sidebarRoot, classes.region);
   const foot = direct(sidebarRoot, classes.foot);
-  if (!logo || !newSession || !region || !foot || newSession.tagName !== "BUTTON") return;
-  const native = Array.from(sidebarRoot.children).filter(child =>
-    child === logo || child === newSession || child === region || child === foot);
-  if (native[0] !== logo || native[1] !== newSession || native[2] !== region || native[3] !== foot) return;
-  return { frame, overlay, sidebar, sidebarBoundary, sidebarRoot, logo, newSession, region, foot, center, details };
+  if (topStrips.length > 1 || panelLists.length > 1 || !logo || !newSession || !region || !foot
+    || newSession.tagName !== "BUTTON" || (panelLists[0] && panelLists[0].tagName !== "NAV")) return;
+  const native = [topStrips[0], logo, newSession, panelLists[0], region, foot];
+  const ownedMounts = Array.from(sidebarRoot.children).filter(child => child.getAttribute(mountAttribute) !== null) as HTMLElement[];
+  const mountNames = ownedMounts.map(child => child.getAttribute(mountAttribute));
+  if (ownedMounts.some(child => !["navigation", "library"].includes(child.getAttribute(mountAttribute) ?? ""))
+    || new Set(mountNames).size !== mountNames.length) return;
+  const knownSidebarChildren = new Set<HTMLElement>([
+    ...native.filter((child): child is HTMLElement => child !== undefined), ...ownedMounts,
+  ]);
+  if (!ordered(sidebarRoot, native)
+    || sidebarRoot.children.length !== knownSidebarChildren.size
+    || Array.from(sidebarRoot.children).some(child => !knownSidebarChildren.has(child as HTMLElement))) return;
+  return { frame, overlay, sidebar, sidebarBoundary, sidebarRoot, logo, newSession, region, foot, center, rightbar };
 }
 
 /** Release only a value we still own; do not overwrite another writer's change. */
@@ -124,12 +170,14 @@ export function attachContentSurface(anchor: HTMLElement, options: ContentSurfac
     element.setAttribute(mountAttribute, name);
   }
   const style = doc.createElement("style");
-  style.setAttribute("data-wemedia-content-style", id);
+  style.setAttribute(styleAttribute, id);
   style.textContent = `
 ${scope} [${mountAttribute}="navigation"] { display: flex; flex: none; min-width: 0; }
 ${scope} [${mountAttribute}="library"], ${scope} [${mountAttribute}="center"] { display: none; flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; }
 ${active} > .${classes.sidebar} > [data-slot="sidebar"] > .${classes.sidebarRoot} > .${classes.newSession},
+${active} > .${classes.sidebar} > [data-slot="sidebar"] > .${classes.sidebarRoot} > .${classes.panelList},
 ${active} > .${classes.sidebar} > [data-slot="sidebar"] > .${classes.sidebarRoot} > .${classes.region},
+${active} > .${classes.leadingSeat},
 ${active} > .${classes.center} > :not([${mountAttribute}="center"]) { display: none !important; }
 ${active} [${mountAttribute}="library"], ${active} [${mountAttribute}="center"] { display: flex; }
 ${scope}[data-sidebar-collapsed] [${mountAttribute}="navigation"] { flex-direction: column; }
@@ -137,7 +185,7 @@ ${scope}[data-sidebar-collapsed] [data-wemedia-nav-label] { display: none; }
 ${scope}[data-sidebar-collapsed] [${mountAttribute}="library"] { display: none; }
 @media(max-width:700px) {
   ${active} { grid-template-columns: minmax(0, 1fr) !important; }
-  ${active} > .${classes.sidebar}, ${active} > .${classes.details} { display: none !important; }
+  ${active} > .${classes.sidebar}, ${active} > .${classes.rightbar} { display: none !important; }
   ${active} > .${classes.center} { flex: 1 1 0; min-width: 0; width: 100%; }
   ${active}[${libraryAttribute}="${id}"] > .${classes.center} { display: none !important; }
   ${active}[${libraryAttribute}="${id}"] > .${classes.sidebar} { display: flex !important; flex: 1 1 0 !important; width: 100% !important; max-width: none !important; min-width: 0; }

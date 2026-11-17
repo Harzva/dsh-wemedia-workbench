@@ -1,5 +1,7 @@
 import type { VersionHistory, VersionComparison, EvidenceDetail } from "../domain/inspection.ts";
-import type { ISessions, SessionFace } from "@deepseek-ai/dsh-client-runtime/client";
+import type { ISessions, SessionFace } from "@deepseek-ai/dsh-api-session-controller/client";
+import type { UiSession } from "@deepseek-ai/dsh-client-ui-session/client";
+import { SessionId } from "@deepseek-ai/dsh-session/types";
 import type { RemoteResult } from "@deepseek-ai/dsh-typert-protocol";
 import type { GateReport, ActionIntent } from "../domain/capability.ts";
 import type { ContentRef } from "../domain/primitives.ts";
@@ -25,11 +27,12 @@ export interface ClientDraftBatchList extends JsonObject {
 export type View = "articles" | "references" | "agent" | "jobs" | "accounts" | "platforms" | "settings";
 export type SessionTarget = Pick<SessionFace, "prompt">;
 /** Host and Client share Cordis's merged Context type, but only this Client face is used. */
-export function resolveCurrentSession(service: unknown): SessionTarget | undefined {
-  const sessions = service as Partial<Pick<ISessions, "list" | "binding">> | undefined;
-  if (typeof sessions?.binding !== "function" || typeof sessions.list?.getSnapshot !== "function") return undefined;
-  const current = sessions.list.getSnapshot().current;
-  return current ? sessions.binding(current)?.session : undefined;
+export function resolveCurrentSession(uiService: unknown, sessionService: unknown): SessionTarget | undefined {
+  const ui = uiService as Partial<Pick<UiSession, "adapter">> | undefined;
+  const sessions = sessionService as Partial<Pick<ISessions, "binding">> | undefined;
+  if (typeof sessions?.binding !== "function" || typeof ui?.adapter?.current?.getSnapshot !== "function") return undefined;
+  const current = ui.adapter.current.getSnapshot().key;
+  return current ? sessions.binding(SessionId(current))?.session : undefined;
 }
 export type CreateInput = { title: string; sourceUrl: string; kind: "paper" | "article" };
 export type CreationPreview = { intent: ActionIntent; summary: string[] };

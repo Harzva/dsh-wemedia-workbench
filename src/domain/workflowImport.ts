@@ -3,13 +3,14 @@ import type { JsonObject } from "./json.ts";
 import { safeRelativeFile, SHA256_PATTERN } from "./wechatDocument.ts";
 import { REVIEW_KINDS, WorkbenchFault } from "./workbench.ts";
 import type { ArticleDocument, ReviewKind, WorkflowMaterial } from "./workbench.ts";
+import { WECHAT_READBACK_CHECKS } from "./wechatReadback.ts";
 
 export const WORKFLOW_PRIVATE = /file:\/\/|\/(?:Users|Volumes|private|var|tmp|home|root|etc|mnt|media|srv|run)(?:\/|\b)|(?:^|[\s"'=])~\/|\b[A-Za-z]:[\\/]|[a-z][a-z0-9+.-]*:\/\/[^\s/?#]*@|\b(?:access[_-]?token|token|secret|password|cookie|authorization|api[_-]?key)["']?\s*[:=]|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/iu;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/u;
 const AAAI26_ARTICLE = /^aaai26-(\d+)$/iu;
 const UPLOAD_MAP_SUFFIX = ".upload-map.json";
 const CHECK = /^[a-z][a-z0-9_]{0,99}$/u;
-export const READBACK_CHECKS = ["present", "title_matches", "topic_prefix_present", "digest_matches", "digest_plain_text", "content_text_matches", "result_table_count_matches", "result_table_cells_match", "content_deep", "image_count_matches", "images_uploaded", "images_match_approved_uploads", "image_upload_map_count_matches", "source_url_matches", "official_page_url_visible", "official_pdf_url_visible", "code_url_visible_or_not_required", "cover_present", "developer_notes_absent", "local_paths_absent"];
+export const READBACK_CHECKS: readonly string[] = WECHAT_READBACK_CHECKS;
 const invalid = (): never => { throw new WorkbenchFault("WORKFLOW_FORMAT_UNSUPPORTED", "材料格式、文章身份或核验依据不受支持；未导入任何通过结论"); };
 export const safeWorkflowText = (value: unknown, max = 2000): value is string => typeof value === "string" && Boolean(value.trim()) && value.length <= max && !/[\u0000-\u001f\u007f]/u.test(value) && !WORKFLOW_PRIVATE.test(value);
 const safeText = safeWorkflowText;

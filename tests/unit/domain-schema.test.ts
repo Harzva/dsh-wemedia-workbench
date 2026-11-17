@@ -26,6 +26,9 @@ import {
 
 const uuid = "550e8400-e29b-41d4-a716-446655440000";
 const contentRef = `wmc:${uuid}` as const;
+const mismatchEvent = { schemaVersion: LEDGER_EVENT_SCHEMA_VERSION, eventId: "event-readback", eventKey: "readback-fixture",
+  occurredAt: "2026-09-14T00:00:00.000Z", contentRef, channel: "wechat", action: "update_draft", outcome: "failed",
+  sideEffect: "remote_draft", evidence: { adapter: "md2wechat-bridge", code: "WECHAT_READBACK_MISMATCH" } };
 
 function roundTrip<T extends JsonValue>(value: T): T {
   expect(isJsonValue(value)).toBe(true);
@@ -33,6 +36,22 @@ function roundTrip<T extends JsonValue>(value: T): T {
 }
 
 describe("versioned pure decoders", () => {
+  it("preserves canonical allowlisted readback failure names and accepts historical events without them", () => {
+    expect(decodeLedgerEvent(mismatchEvent)).toEqual({ ok: true, value: mismatchEvent });
+    const result = decodeLedgerEvent({ ...mismatchEvent, evidence: { ...mismatchEvent.evidence,
+      failedCheckCodes: ["image_count_matches", "content_text_matches"], rawBody: "PRIVATE_BODY" } });
+    expect(result).toMatchObject({ ok: true, value: { evidence: { failedCheckCodes: ["content_text_matches", "image_count_matches"] } } });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_BODY");
+  });
+  it.each([[], ["unknown"], ["content_text_matches", "content_text_matches"], [false], "content_text_matches", null,
+    ["https://example.org/private"], { content_text_matches: false }])("rejects malformed readback failure names %#", failedCheckCodes => {
+    expect(decodeLedgerEvent({ ...mismatchEvent, evidence: { ...mismatchEvent.evidence, failedCheckCodes } })).toMatchObject({ ok: false,
+      error: { code: "SCHEMA_INVALID_VALUE", path: "evidence.failedCheckCodes" } });
+  });
+  it.each([{ channel: "x" }, { outcome: "succeeded" }, { evidence: { ...mismatchEvent.evidence, code: "WECHAT_HTTP_FAILED" } }])("binds failure names to an unsuccessful WeChat readback %#", fields => {
+    const input = { ...mismatchEvent, ...fields };
+    expect(decodeLedgerEvent({ ...input, evidence: { ...input.evidence, failedCheckCodes: ["content_text_matches"] } }).ok).toBe(false);
+  });
   it("decodes content and preserves unknown fields in extensions", () => {
     const result = decodeContentManifest({
       schemaVersion: CONTENT_SCHEMA_VERSION,

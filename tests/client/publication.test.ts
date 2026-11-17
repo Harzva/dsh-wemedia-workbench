@@ -12,7 +12,7 @@ import { REVIEW_KINDS } from "../../src/domain/workbench.ts";
 import { articleWorkflowStatus } from "../../src/domain/articleWorkflowStatus.ts";
 
 const require = createRequire(import.meta.url);
-const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-runtime"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
+const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-ui-primitives"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
 const record = (patch: Partial<PublicationRecord> = {}): PublicationRecord => ({ channel: "wechat", status: "draft", publishedAt: null, checkedAt: null, url: null, evidence: "local_draft", note: "", ...patch });
 
 describe("Article publication evidence presentation", () => {

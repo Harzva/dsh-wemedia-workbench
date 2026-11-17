@@ -11,6 +11,7 @@ import type { LedgerEvent } from "./ledger.ts";
 import { LEDGER_EVENT_SCHEMA_VERSION } from "./ledger.ts";
 import { isChannel, isUuidV4, parseContentRef } from "./primitives.ts";
 import type { Channel, ContentRef } from "./primitives.ts";
+import { WECHAT_READBACK_CHECKS } from "./wechatReadback.ts";
 
 export const CONTENT_SCHEMA_VERSION = "wemedia.content/v1" as const;
 export const OVERLAY_SCHEMA_VERSION = "wemedia.overlay/v1" as const;
@@ -360,6 +361,13 @@ export function decodeLedgerEvent(input: unknown): DomainResult<LedgerEvent> {
   if (!adapterVersion.ok) return adapterVersion;
   const channelValue = value.channel;
   if (channelValue !== undefined && (typeof channelValue !== "string" || !isChannel(channelValue))) return failure("SCHEMA_INVALID_VALUE", "ledger channel is invalid", { path: "channel" });
+  const failedChecks = value.evidence.failedCheckCodes;
+  if (failedChecks !== undefined && (code.value !== "WECHAT_READBACK_MISMATCH" || channelValue !== "wechat" || outcome === "succeeded"
+    || !Array.isArray(failedChecks) || failedChecks.length < 1 || failedChecks.length > WECHAT_READBACK_CHECKS.length
+    || new Set(failedChecks).size !== failedChecks.length
+    || failedChecks.some(key => typeof key !== "string" || !(WECHAT_READBACK_CHECKS as readonly string[]).includes(key)))) {
+    return failure("SCHEMA_INVALID_VALUE", "readback check codes are invalid", { path: "evidence.failedCheckCodes" });
+  }
   const jobId = optionalString(value, "jobId");
   if (!jobId.ok) return jobId;
   const supersedesEventId = optionalString(value, "supersedesEventId");
@@ -381,6 +389,7 @@ export function decodeLedgerEvent(input: unknown): DomainResult<LedgerEvent> {
       adapter: adapter.value,
       code: code.value,
       ...(adapterVersion.value === undefined ? {} : { adapterVersion: adapterVersion.value }),
+      ...(Array.isArray(failedChecks) ? { failedCheckCodes: WECHAT_READBACK_CHECKS.filter(key => failedChecks.includes(key)) } : {}),
     },
     ...(channelValue === undefined ? {} : { channel: channelValue as Channel }),
     ...(jobId.value === undefined ? {} : { jobId: jobId.value }),

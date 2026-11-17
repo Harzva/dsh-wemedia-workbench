@@ -3,6 +3,7 @@ import { canonicalJson } from "./json.ts";
 import type { JsonObject } from "./json.ts";
 import { fnv1a64 } from "./identity.ts";
 import type { Channel, ContentRef } from "./primitives.ts";
+import type { WechatReadbackCheck } from "./wechatReadback.ts";
 
 export const LEDGER_EVENT_SCHEMA_VERSION = "wemedia.ledger-event/v1" as const;
 
@@ -12,6 +13,7 @@ export interface LedgerEvidence extends JsonObject {
   adapter: string;
   code: string;
   adapterVersion?: string;
+  failedCheckCodes?: WechatReadbackCheck[];
 }
 
 export interface LedgerRemote extends JsonObject {

@@ -2,7 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { SystemPrompt } from "@deepseek-ai/dsh-system-prompt";
 import { ToolRuntime, renderToolsSdk, validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
 import type { ToolDefinition, ToolExecutionInput, ToolRunContext } from "@deepseek-ai/dsh-tools";
-import { WorkerThreadCodeRuntime } from "@deepseek-ai/dsh-code-runtime-worker-thread";
+import { installPtcRuntime } from "./ptc-fixture.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -46,7 +46,7 @@ async function nativeSetup() {
   const ctx = new Context(); cleanups.push(() => ctx.fiber.dispose());
   await ctx.plugin(SystemPrompt, {}).await();
   await ctx.plugin(ToolRuntime, { mode: "both", maxParallelSubCalls: 2 }).await();
-  await ctx.plugin(WorkerThreadCodeRuntime, { computeMs: 1000, maxWallMs: 10_000, maxOutputBytes: 512 * 1024, maxOldGenerationSizeMb: 128 }).await();
+  await installPtcRuntime(ctx);
   ctx.effect(() => registerWorkbenchTools(ctx, f.service, f.callers));
   let id = 0;
   const call = (name: string, args: unknown) => ctx.tools.execute({ callId: `platform-catalog-${++id}` as ToolExecutionInput["callId"], name, arguments: args, signal: new AbortController().signal });
@@ -138,7 +138,7 @@ describe("research platform catalog Native/PTC contract", () => {
     const nested = await f.ptc();
     expect(direct.isError).toBe(false); expect(nested.isError).toBe(false);
     expect(direct.value).toMatchObject({ ok: true, value: getPlatformCatalog() });
-    expect(nested.value).toEqual({ logs: [], result: direct.value });
+    expect(nested.value).toEqual({ logs: [], sandbox: { mode: "read-only", denied: false, enforcement: expect.stringMatching(/^(full|partial)$/) }, result: direct.value });
     const sdkFields = await f.call("run_code", { code: `const answer = await tools.${toolName}({}); if (!answer.ok) return answer; return answer.value.platforms.map(p => ({id:p.id,status:p.status,formats:p.formats,repositories:p.referenceIds}));`, description: "Use typed catalog fields in existing PTC worker" });
     expect(sdkFields.isError).toBe(false);
     expect(sdkFields.value).toMatchObject({ result: getPlatformCatalog().platforms.map(platform => ({ id: platform.id, status: "research_only", formats: platform.formats, repositories: platform.referenceIds })) });

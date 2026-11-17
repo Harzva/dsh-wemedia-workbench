@@ -22,6 +22,28 @@ describe("strict WeChat bridge decoder", () => {
     expect(failure).toMatchObject({ ok: false, remoteId: "UppercaseMediaID", reconcileRequired: true });
     expect(decodeWechatBridge(JSON.stringify({ ...envelope, issues: [{ status: "block", code: "WECHAT_BAD" }] }), "draft_create", revision).ok).toBe(false);
   });
+  it.each(["draft_create", "draft_update", "sync"] as const)("retains only complete allowlisted mismatch diagnostics for %s", operation => {
+    const failure = { ...envelope, operation, ok: false, code: "WECHAT_READBACK_MISMATCH", remoteWriteAttempted: operation !== "sync",
+      checks: { ...envelope.checks, content_text_matches: false, image_count_matches: false },
+      content: "PRIVATE_BODY", failedCheckCodes: ["FORGED_DIAGNOSTIC"] };
+    const decoded = decodeWechatBridge(JSON.stringify(failure), operation, revision);
+    expect(decoded).toMatchObject({ ok: false, code: "WECHAT_READBACK_MISMATCH", reconcileRequired: operation !== "sync",
+      failedCheckCodes: ["content_text_matches", "image_count_matches"] });
+    expect(decoded).not.toHaveProperty("checks");
+    expect(JSON.stringify(decoded)).not.toMatch(/PRIVATE_BODY|FORGED_DIAGNOSTIC/u);
+  });
+  it.each([undefined, null, [], {}, { ...envelope.checks, extra: false },
+    { ...envelope.checks, content_text_matches: "false" }, envelope.checks])("does not manufacture diagnostics from absent, malformed or all-true checks %#", checks => {
+    const result = decodeWechatBridge(JSON.stringify({ ...envelope, ok: false, code: "WECHAT_READBACK_MISMATCH", checks,
+      failedCheckCodes: ["content_text_matches"] }), "draft_create", revision);
+    expect(result).toMatchObject({ ok: false, code: "WECHAT_READBACK_MISMATCH", reconcileRequired: true });
+    expect(result).not.toHaveProperty("failedCheckCodes");
+  });
+  it("keeps diagnostic names out of success and unrelated failure results", () => {
+    expect(decodeWechatBridge(JSON.stringify({ ...envelope, failedCheckCodes: ["content_text_matches"] }), "draft_create", revision)).not.toHaveProperty("failedCheckCodes");
+    expect(decodeWechatBridge(JSON.stringify({ ...envelope, ok: false, code: "WECHAT_HTTP_FAILED",
+      checks: { ...envelope.checks, content_text_matches: false } }), "draft_create", revision)).not.toHaveProperty("failedCheckCodes");
+  });
 });
 
 const accountRef = `wechat-account:${"a".repeat(32)}`;
@@ -122,6 +144,16 @@ describe("draft identity decoder", () => {
 });
 
 describe("WeChat read-only extensions", () => {
+  it("projects mismatch names without raw checks or body in a read-only sync result", async () => {
+    const { adapter } = adapterFor({ ...envelope, operation: "sync", ok: false, code: "WECHAT_READBACK_MISMATCH",
+      remoteWriteAttempted: false, checks: { ...envelope.checks, content_text_matches: false }, content: "PRIVATE_BODY" });
+    await adapter.discover(signal());
+    const result = await adapter.run("sync", document, null, signal());
+    expect(result).toMatchObject({ ok: false, sideEffect: "read", retryable: false, reconcileRequired: false, failedCheckCodes: ["content_text_matches"] });
+    expect(result).not.toHaveProperty("checks");
+    expect(result.remote).not.toHaveProperty("failedCheckCodes");
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_BODY");
+  });
   it.each(["ai_inspect", "ai_preview"] as const)("sends only private %s input and projects safe diagnostics", async operation => {
     const { adapter, run, privateState, command } = adapterFor({ ...aiEnvelope, operation });
     const result = await adapter.inspectAi(operation, document, signal());

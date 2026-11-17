@@ -9,7 +9,7 @@ import { ContentLibraryDetail, ContentLibrarySidebar, contentEmptyMessage, conte
 
 // Use the native Client's already-installed React renderer, without another UI dependency.
 const require = createRequire(import.meta.url);
-const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-runtime"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
+const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-ui-primitives"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
 const item = (id = "a", kind: LibraryItem["kind"] = "article"): LibraryItem => ({ itemId: `library:${id.repeat(64)}`, title: `Content ${id}`, kind, publicationType: kind === "image" ? null : kind, publicationStatus: kind === "article" ? "draft" : "unknown", origin: kind === "article" ? "legacy" : "local", rootLabel: "本地内容", readOnly: true, legacyReadOnly: kind === "article", contentRef: null, mediaType: kind === "image" ? "image/png" : kind === "video" ? "video/mp4" : null, bytes: kind === "article" ? null : 3, revisionDigest: `sha256:${id}`, status: "local", updatedAt: null });
 const detail = (entry = item()): LibraryDetail => ({ item: entry, html: "<p>Legacy article</p>", markdown: null, issues: [] });
 const page = (items = [item()], cursor: string | null = null, revisionDigest = "sha256:inventory"): LibraryPage => ({ items, total: items.length, nextCursor: cursor, revisionDigest, issues: [], truncated: false });

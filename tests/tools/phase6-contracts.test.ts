@@ -2,7 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { SystemPrompt } from "@deepseek-ai/dsh-system-prompt";
 import { ToolRuntime, renderToolsSdk, validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
 import type { ToolDefinition, ToolExecutionInput, ToolRunContext } from "@deepseek-ai/dsh-tools";
-import { WorkerThreadCodeRuntime } from "@deepseek-ai/dsh-code-runtime-worker-thread";
+import { installPtcRuntime } from "./ptc-fixture.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JsonObject } from "../../src/domain/json.ts";
 import type { LibraryDetail, LibraryItem, LibraryMediaChunk, LibraryPage } from "../../src/domain/contentLibrary.ts";
@@ -153,7 +153,7 @@ describe("P6 typed publication, mapping and setup tools", () => {
     const f = harness(); const ctx = new Context(); cleanups.push(() => ctx.fiber.dispose());
     await ctx.plugin(SystemPrompt, {}).await();
     await ctx.plugin(ToolRuntime, { mode: "both", maxParallelSubCalls: 2 }).await();
-    await ctx.plugin(WorkerThreadCodeRuntime, { computeMs: 1000, maxWallMs: 10_000, maxOutputBytes: 512 * 1024, maxOldGenerationSizeMb: 128 }).await();
+    await installPtcRuntime(ctx);
     ctx.effect(() => registerWorkbenchTools(ctx, f.target, f.binder));
     let id = 0;
     const call = (name: string, args: unknown) => ctx.tools.execute({ callId: `p6-${++id}` as ToolExecutionInput["callId"], name, arguments: args, signal: new AbortController().signal });
@@ -161,7 +161,7 @@ describe("P6 typed publication, mapping and setup tools", () => {
       const direct = await call(`wemedia_${test.operation}`, test.args);
       const nested = await call("run_code", { code: `return await tools.wemedia_${test.operation}(${JSON.stringify(test.args)});`, description: "P6 offline typed contract" });
       expect(direct.isError, test.operation).toBe(false); expect(nested.isError, test.operation).toBe(false);
-      expect(direct.value).toEqual(answer(test.value)); expect(nested.value).toEqual({ logs: [], result: direct.value });
+      expect(direct.value).toEqual(answer(test.value)); expect(nested.value).toEqual({ logs: [], sandbox: { mode: "read-only", denied: false, enforcement: expect.stringMatching(/^(full|partial)$/) }, result: direct.value });
     }
     // Disabling writes preserves readable saved drafts and the same typed media projection.
     f.request.mockImplementation(async () => answer({ ...draft, readOnlySource: true }));
@@ -169,7 +169,7 @@ describe("P6 typed publication, mapping and setup tools", () => {
     const readOnlyPtc = await call("run_code", { code: `return await tools.wemedia_publication_read({contentRef:${JSON.stringify(contentRef)}});`, description: "P6 saved read-only draft" });
     expect(readOnlyDirect.isError).toBe(false); expect(readOnlyPtc.isError).toBe(false);
     expect(readOnlyDirect.value).toEqual(answer({ ...draft, readOnlySource: true }));
-    expect(readOnlyPtc.value).toEqual({ logs: [], result: readOnlyDirect.value });
+    expect(readOnlyPtc.value).toEqual({ logs: [], sandbox: { mode: "read-only", denied: false, enforcement: expect.stringMatching(/^(full|partial)$/) }, result: readOnlyDirect.value });
     f.request.mockClear();
     ctx.tools.guard(exec => exec.name === "wemedia_mapping_apply" ? "P6_POLICY_DENY" : undefined);
     for (const [name, args] of [["wemedia_mapping_apply", { intentId: "intent:mapping" }], ["run_code", { code: 'return await tools.wemedia_mapping_apply({intentId:"intent:mapping"});', description: "P6 policy contract" }]] as const) {

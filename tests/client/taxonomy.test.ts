@@ -9,7 +9,7 @@ import { ContentLibraryDetail, ContentLibrarySidebar, contentEmptyMessage } from
 import { ArticleTaxonomyChips } from "../../src/client/taxonomy.tsx";
 
 const require = createRequire(import.meta.url);
-const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-runtime"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
+const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-ui-primitives"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
 const taxonomy: ArticleTaxonomy = { category: "conference", conference: "NeurIPS", year: 2026, tags: ["记忆", "工具调用", "评测"] };
 const facets: ArticleFacets = { categories: [{ value: "conference", count: 12 }, { value: "arxiv", count: 36 }, { value: "other", count: 2 }], conferences: [{ value: "NeurIPS", count: 10 }, { value: "ICLR", count: 2 }], years: [{ value: 2026, count: 45 }, { value: 2025, count: 5 }], tags: [{ value: "记忆", count: 18 }, { value: "工具调用", count: 12 }] };
 const item: LibraryItem = { itemId: `library:${"a".repeat(64)}`, title: "会议论文解读", kind: "article", publicationType: "article", publicationStatus: "draft", origin: "legacy", rootLabel: "本地文章", readOnly: true, legacyReadOnly: true, contentRef: null, mediaType: null, bytes: null, revisionDigest: "sha256:item", status: "local", updatedAt: null, taxonomy };

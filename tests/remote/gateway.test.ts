@@ -29,14 +29,14 @@ describe("strict actual Typert Gateway", () => {
     await vi.waitFor(() => expect(remote(ctx)).toBeDefined());
     expect(await invoke(ctx, { operation: "snapshot" })).toEqual(await remote(ctx)!.request({ operation: "snapshot" }, signal()));
     expect(await invoke(ctx, { operation: "platform_catalog" })).toEqual(await remote(ctx)!.request({ operation: "platform_catalog" }, signal()));
-    await expect(ctx.typertGateway.invoke({ namespace: "wemedia", method: "request", args: { request: { operation: "snapshot" }, approved: true } })).rejects.toMatchObject({ code: "arguments-invalid" });
+    await expect(ctx.typertGateway.invoke({ namespace: "wemedia", method: "request", args: { request: { operation: "snapshot" }, approved: true } })).rejects.toMatchObject({ code: "gateway/arguments-invalid" });
     for (const request of [{ operation: "platform_catalog", approved: true }, { operation: "snapshot", caller: { kind: "agent" } }, { operation: "start_action", intentId: "fixture", approved: true }, { operation: "channel_start_action", intentId: "fixture", approved: true }, { operation: "channel_preview_action", contentRef: "wmc:11111111-1111-4111-8111-111111111111", channel: "x", action: "publish", targetUrl: "https://x.com/a/status/123" }, { operation: "channel_preflight", contentRef: "wmc:11111111-1111-4111-8111-111111111111", channel: "csdn" }, { operation: "not_a_workbench_operation" }]) {
-      await expect(invoke(ctx, request)).rejects.toMatchObject({ code: "input-invalid" });
+      await expect(invoke(ctx, request)).rejects.toMatchObject({ code: "gateway/input-invalid" });
     }
     expect(await invoke(ctx, { operation: "channel_inspect", contentRef: "wmc:11111111-1111-4111-8111-111111111111" })).toEqual(await remote(ctx)!.request({ operation: "channel_inspect", contentRef: "wmc:11111111-1111-4111-8111-111111111111" }, signal()));
-    await expect(ctx.typertGateway.invoke({ namespace: "wemedia", method: "dispose", args: {} })).rejects.toMatchObject({ code: "invocation-unavailable" });
+    await expect(ctx.typertGateway.invoke({ namespace: "wemedia", method: "dispose", args: {} })).rejects.toMatchObject({ code: "gateway/invocation-unavailable" });
     unregister();
-    await expect(invoke(ctx, { operation: "snapshot" })).rejects.toMatchObject({ code: "definition-unavailable" });
+    await expect(invoke(ctx, { operation: "snapshot" })).rejects.toMatchObject({ code: "gateway/definition-unavailable" });
     expect(remote(ctx)).toBeDefined(); // No permissive source-marker fallback.
   });
 
@@ -67,7 +67,7 @@ describe("strict actual Typert Gateway", () => {
     await ctx.loader.remove(first);
     await vi.waitFor(() => expect(ctx.typert.local.get("wemedia/request")).toBeUndefined());
     expect(remote(ctx)).toBeUndefined();
-    await expect(invoke(ctx, { operation: "snapshot" })).rejects.toMatchObject({ code: "definition-unavailable" });
+    await expect(invoke(ctx, { operation: "snapshot" })).rejects.toMatchObject({ code: "gateway/definition-unavailable" });
     await start();
     expect(remote(ctx)).not.toBe(old);
     expect(await old.request({ operation: "snapshot" }, signal())).toMatchObject({ ok: false, error: { code: "GENERATION_DISPOSED" } });

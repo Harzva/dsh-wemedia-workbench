@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RemoteResult } from "@deepseek-ai/dsh-typert-protocol";
+import { RemoteError } from "@deepseek-ai/dsh-typert-protocol";
 import type { ActionIntent, GateReport } from "../../src/domain/capability.ts";
 import type { ArticleDocument, WorkbenchAnswer, WorkbenchJob, WorkbenchPage, WorkbenchRequest, WorkbenchSnapshot, WorkbenchValue } from "../../src/domain/workbench.ts";
 import type { WemediaRemote } from "../../src/remote/descriptors.ts";
@@ -70,7 +71,7 @@ async function submitCreation() {
 describe("Workbench Client request and session boundaries", () => {
   it("unwraps both layers and never displays raw carrier diagnostics", () => {
     expect(unwrapAnswer(answer(page()))).toEqual(page());
-    expect(() => unwrapAnswer({ ok: false, error: { code: "offline", message: "untrusted diagnostic", details: {} } })).toThrowError("无法连接工作台服务");
+    expect(() => unwrapAnswer({ ok: false, error: new RemoteError("gateway/internal", "untrusted diagnostic", {}) })).toThrowError("无法连接工作台服务");
     try { unwrapAnswer({ ok: true, value: { ok: false, error: { code: "WRITE_ROOT_MISSING", safeMessage: "请配置写入目录", retryable: false } } }); }
     catch (error) { expect(error).toBeInstanceOf(ClientFault); expect(error).toMatchObject({ code: "WRITE_ROOT_MISSING", message: "请配置写入目录" }); }
   });
@@ -78,11 +79,13 @@ describe("Workbench Client request and session boundaries", () => {
   it("resolves only the installed current-session binding without creating or switching", () => {
     const session = { prompt: acceptPrompt() };
     const binding = vi.fn().mockReturnValue({ session });
-    expect(resolveCurrentSession({ list: { getSnapshot: () => ({ current: "current-id" }) }, binding })).toBe(session);
+    const ui = { adapter: { current: { getSnapshot: () => ({ key: "current-id" }) } } };
+    expect(resolveCurrentSession(ui, { binding })).toBe(session);
     expect(binding).toHaveBeenCalledExactlyOnceWith("current-id");
-    expect(resolveCurrentSession(undefined)).toBeUndefined();
-    expect(resolveCurrentSession({ list: { getSnapshot: () => ({ current: null }) }, binding })).toBeUndefined();
-    expect(resolveCurrentSession({ get: () => session })).toBeUndefined();
+    expect(resolveCurrentSession(undefined, { binding })).toBeUndefined();
+    expect(resolveCurrentSession({ adapter: { current: { getSnapshot: () => ({ key: undefined }) } } }, { binding })).toBeUndefined();
+    expect(resolveCurrentSession(ui, undefined)).toBeUndefined();
+    expect(resolveCurrentSession(ui, { get: () => session })).toBeUndefined();
   });
 
   it("requires the exact save preview before a local start, retaining source metadata", async () => {
@@ -143,7 +146,7 @@ describe("Workbench Client request and session boundaries", () => {
   });
 
   it("does not report queued when the session rejects the task", async () => {
-    const prompt = vi.fn<SessionTarget["prompt"]>().mockResolvedValue({ ok: false, error: { code: "internal", message: "private diagnostic", details: {} } });
+    const prompt = vi.fn<SessionTarget["prompt"]>().mockResolvedValue({ ok: false, error: new RemoteError("gateway/internal", "private diagnostic", {}) });
     const { controller } = setup({ prompt });
     await controller.select(ref);
     await controller.taskBrief("research");
@@ -952,9 +955,9 @@ describe("Draft batch handoff and recent queue state", () => {
   });
 
   it("marks the batch intent before an uncertain prompt result and never duplicates handoff", async () => {
-    const prompt = vi.fn<SessionTarget["prompt"]>().mockResolvedValue({ ok: false, error: { code: "internal", message: "uncertain", details: {} } });
+    const prompt = vi.fn<SessionTarget["prompt"]>().mockResolvedValue({ ok: false, error: new RemoteError("gateway/internal", "uncertain", {}) });
     const fixture = await previewFixture({ prompt });
-    await expect(fixture.controller.handoffDraftBatchIntent("draft-intent-test")).rejects.toMatchObject({ code: "internal" });
+    await expect(fixture.controller.handoffDraftBatchIntent("draft-intent-test")).rejects.toMatchObject({ code: "gateway/internal" });
     await fixture.controller.handoffDraftBatchIntent("draft-intent-test");
     expect(fixture.intentTask).toHaveBeenCalledTimes(1); expect(prompt).toHaveBeenCalledTimes(1); expect(fixture.controller.getSnapshot().draftBatchError).toContain("交给当前 Agent"); fixture.controller.dispose();
   });
@@ -1027,8 +1030,8 @@ describe("reference-task handoff", () => {
     f.request.mockImplementation(async input => answer({ schemaVersion: "wemedia.reference-brief/v1", ids, action: "analyze", prompt: "Reference analysis" }));
     await f.controller.queueReferenceTask(ids, "analyze", "");
     expect(prompt).toHaveBeenCalledTimes(1);
-    prompt.mockResolvedValue({ ok: false, error: { code: "internal", message: "Prompt rejected", details: {} } });
-    await expect(f.controller.queueReferenceTask(ids, "analyze", "")).rejects.toMatchObject({ code: "internal" });
+    prompt.mockResolvedValue({ ok: false, error: new RemoteError("gateway/internal", "Prompt rejected", {}) });
+    await expect(f.controller.queueReferenceTask(ids, "analyze", "")).rejects.toMatchObject({ code: "gateway/internal" });
   });
   it("does not queue a late brief after the reference view closes", async () => {
     const prompt = acceptPrompt(), f = setup({ prompt }); f.controller.navigate("references");

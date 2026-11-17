@@ -2,11 +2,10 @@ import { Context } from "@deepseek-ai/cordis";
 import { SystemPrompt } from "@deepseek-ai/dsh-system-prompt";
 import { ToolRuntime } from "@deepseek-ai/dsh-tools";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
-import { SettingsProvider, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import type { SettingsNamespace } from "@deepseek-ai/dsh-settings";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as plugin from "../../src/index.ts";
 import { createDefaultConfig } from "../../src/config.ts";
+import { workbenchProfile } from "./profile-fixture.ts";
 import type { WorkbenchSnapshot } from "../../src/domain/workbench.ts";
 import type { WemediaRemoteService } from "../../src/remote/service.ts";
 import { WORKBENCH_TOOL_NAMES } from "../../src/host/tools.ts";
@@ -23,12 +22,6 @@ async function snapshot(service: WemediaRemoteService) {
   if (!result.ok) throw new Error(result.error.code);
   return result.value as WorkbenchSnapshot;
 }
-class MemorySettings extends SettingsProvider {
-  readonly writable = true;
-  private readonly values: Record<string, unknown> = {};
-  protected async load() { return this.values; }
-  protected async persist(ns: SettingsNamespace, section: Record<string, unknown>) { this.values[ns] = section; }
-}
 
 describe("real Cordis Host ownership and cleanup", () => {
   it("keeps unconfigured RPC useful, registers tools when the dependency arrives, and removes both on stop", async () => {
@@ -44,10 +37,9 @@ describe("real Cordis Host ownership and cleanup", () => {
     expect(await service.request({ operation: "snapshot" }, signal())).toMatchObject({ ok: false, error: { code: "GENERATION_DISPOSED" } });
   });
   it("reloads only the workbench generation through the native optional settings seam", async () => {
-    const ctx = await setup(); await tools(ctx); await ctx.plugin(MemorySettings).await();
-    const mounted = ctx.plugin(plugin, createDefaultConfig()); await mounted.await();
+    const { ctx, mounted } = await workbenchProfile(createDefaultConfig()); roots.push(ctx); await tools(ctx);
     const before = await ready(ctx); const initial = await snapshot(before);
-    const ns = settingsNamespace(plugin.name);
+    const ns = plugin.name;
     expect(ctx.settings.describe({ redactSecrets: true }).some(item => item.ns === ns)).toBe(true);
     await ctx.settings.update(ns, { scan: { debounceMs: 1000, maxFileBytes: 1048576 } });
     await vi.waitFor(async () => { expect(remote(ctx)).toBeDefined(); expect((await snapshot(remote(ctx)!)).generationId).not.toBe(initial.generationId); }, { timeout: 3000 });

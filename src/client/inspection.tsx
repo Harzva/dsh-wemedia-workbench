@@ -6,6 +6,7 @@ import type { ClientState, WorkbenchController } from "./controller.ts";
 import { useDialogFocus } from "./interactions.ts";
 import { displayTime, shortId } from "./presentation.ts";
 import { workbenchStyles } from "./styles.ts";
+import { diffLabels } from "./diff-labels.ts";
 
 const btn = "wm-native-button";
 
@@ -29,7 +30,7 @@ export function VersionHistoryView({ state, controller }: { state: ClientState; 
     {!state.history ? <p role="status">尚未读取历史。首次启用历史索引前的文件不会自动认领。</p> : <>
       <div className="wm-grid">{(["from", "to"] as const).map(side => <label key={side}>{side === "from" ? "较早版本" : "对比版本"}<select disabled={pending} value={side === "from" ? fromId : toId} onChange={event => side === "from" ? setFrom(event.target.value) : setTo(event.target.value)}>{state.history!.versions.map(item => <option key={item.id} value={item.id} disabled={!item.available}>{item.current ? "当前 · " : ""}{item.title} · {displayTime(item.recordedAt)} · {shortId(item.id)}{item.available ? "" : " · 文件已变化或缺失"}</option>)}</select></label>)}</div>
       <Button className={btn} variant="outline" disabled={pending || controller.dirty || !fromId || !toId} onClick={event => { readTrigger.current = event.currentTarget; void controller.compareVersions(fromId, toId); }}>比较所选版本</Button>
-      {comparison && <div className="wm-stack" aria-live="polite"><h4>版本差异</h4>{comparison.fields.length ? <DiffBlock diffs={comparison.fields} maxLines={32} className="wm-native-diff" /> : <p>公开信息、正文与 Markdown 相同。</p>}<h4>素材变化 · {comparison.assets.length} 项</h4>{comparison.assets.length ? <ul className="wm-material-list">{comparison.assets.map((asset, index) => <li key={index} className="wm-material-item"><strong>{({ added: "新增", removed: "移除", changed: "内容变化" })[asset.change]}</strong><p className="wm-code">{asset.before?.source ?? "无"} → {asset.after?.source ?? "无"}</p><details><summary>比较素材摘要</summary><p className="wm-code">{asset.before?.digest ?? "无"}<br />{asset.after?.digest ?? "无"}</p></details></li>)}</ul> : <p>素材字节无增删或变化；版本目录内的复制重命名已按摘要匹配。</p>}</div>}
+      {comparison && <div className="wm-stack" aria-live="polite"><h4>版本差异</h4>{comparison.fields.length ? <DiffBlock labels={diffLabels} diffs={comparison.fields} maxLines={32} className="wm-native-diff" /> : <p>公开信息、正文与 Markdown 相同。</p>}<h4>素材变化 · {comparison.assets.length} 项</h4>{comparison.assets.length ? <ul className="wm-material-list">{comparison.assets.map((asset, index) => <li key={index} className="wm-material-item"><strong>{({ added: "新增", removed: "移除", changed: "内容变化" })[asset.change]}</strong><p className="wm-code">{asset.before?.source ?? "无"} → {asset.after?.source ?? "无"}</p><details><summary>比较素材摘要</summary><p className="wm-code">{asset.before?.digest ?? "无"}<br />{asset.after?.digest ?? "无"}</p></details></li>)}</ul> : <p>素材字节无增删或变化；版本目录内的复制重命名已按摘要匹配。</p>}</div>}
       {state.history.notes.map(note => <p key={note} className="wm-small wm-muted">{note}</p>)}
     </>}
   </section>;

@@ -10,7 +10,7 @@ import { SetupView, SetupViewController } from "../../src/client/setup-view.tsx"
 import { MappingPanel, MappingViewController } from "../../src/client/mapping-view.tsx";
 
 const require = createRequire(import.meta.url);
-const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-runtime"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
+const { renderToStaticMarkup } = require(require.resolve("react-dom/server", { paths: [dirname(require.resolve("@deepseek-ai/dsh-client-ui-primitives"))] })) as { renderToStaticMarkup: (node: ReactNode) => string };
 const ref = "wmc:55555555-5555-4555-8555-555555555555" as const;
 const before: SetupSelection = { rootIds: ["articles"], writeRootId: null };
 const after: SetupSelection = { rootIds: ["articles", "other"], writeRootId: "drafts" };

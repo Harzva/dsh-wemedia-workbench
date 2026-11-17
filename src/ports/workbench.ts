@@ -11,6 +11,7 @@ import type { JsonObject } from "../domain/json.ts";
 import type { ApprovalBridge } from "./approval.ts";
 import type { SourceRecord } from "../domain/content.ts";
 import type { OverlayV1 } from "../domain/schema.ts";
+import type { WechatReadbackCheck } from "../domain/wechatReadback.ts";
 
 export interface WorkbenchDocuments {
   refresh(): Promise<void>;
@@ -50,6 +51,7 @@ export interface WorkbenchRemoteResult extends AdapterResult {
   verifiedAt?: string;
   uploads?: Array<{ source: string; sha256: string; media_id: string; wechat_url: string }>;
   reconcileRequired?: boolean;
+  failedCheckCodes?: WechatReadbackCheck[];
 }
 
 export interface WorkbenchAdapter {

@@ -5,7 +5,7 @@
 A local-first media workbench for DeepSeek Harness, with revision-bound reviews,
 explicit approvals and persistent delivery jobs.
 
-**状态：早期开发版源码。** 当前锁定 DSH `0.1.1-rc.2` / Cordis `4.0.1`，
+**状态：早期开发版源码。** 当前锁定 DSH `0.2.0-rc.2` / Cordis `4.0.4`，
 不承诺兼容其他版本。渠道桥接代码不等于真实账号发帖已验收；默认配置不包含
 内容目录、凭据或已启用的远端适配器。本项目不是 DeepSeek 官方产品。
 
@@ -53,11 +53,38 @@ pnpm check
 构建或验证发布包；使用独立检出和隔离 profile。仓库不分发账号桥、密钥、
 Cookie、文章库、模型订阅或模型权重。安装源码也不会自动配置发布账号。
 
+### 0.2 迁移
+
+DSH `0.2.0-rc.2` 仍是预览版；本工作台固定这一版本，不自动跟随 alpha。
+
+从 GitHub Releases 下载 `dsh-wemedia-workbench-0.2.0.tgz` 后，用 DSH
+`0.2.0-rc.2` 的 CLI 在下载目录运行下面的命令。
+
+```sh
+dsh plugin --profile web add "$PWD/dsh-wemedia-workbench-0.2.0.tgz"
+```
+
+启动 Web 配置后，从侧栏「内容」进入工作台。发行包包含已构建的 Host、Client、
+Remote 与使用文档。公众号投递以保存草稿和回读核验为终点，正式发表在公众号后台另行完成。
+
+设置表单通过 Loader 的 volatile 配置和 config-editor 持久化到 profile patch；
+目录路径与适配器配置仍由 profile 管理，不另建一份设置权威来源。
+旧 system-prompt 的 `persona` 字段须迁移为 `personaPrefix`，保留原指令文本。
+
+升级前停止写入并备份启动器、profile 与 lockfile、旧设置、会话和工作台数据。
+先在独立安装目录和无账号 profile 完成构建、冷启动与浏览器验证，再切换
+专用启动入口。不要让两个核心版本同时写同一个 home。回退需要同时恢复
+旧依赖、配置和发生迁移的数据，不能只改版本号。
+
+核心升级不会新增渠道能力：视频稿件仍是本地工作流，未包含视频号发布适配器。
+既有未知结果仍应先回读核对，升级本身不触发重新投递或正式发布。
+
 ### CLI 与 PTC
 
 当前**没有统一的 `wemedia` CLI**。批量微信草稿通过工作台与同源原生工具提供，
 不是独立 CLI，也不是无审批的批量发布命令。
 DSH 原生工具和 PTC 是工作流入口；PTC 需宿主已启用对应工具模式。
+0.2 使用进程隔离的 Node PTC 运行时，继承宿主沙箱；工作台不修改权限或工具模式。
 `wemedia_batch_preflight` 只做只读预检，不创建草稿或正式发布。
 两个 Python 脚本是本地素材辅助工具，不是另一套发布引擎。
 

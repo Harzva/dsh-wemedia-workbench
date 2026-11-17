@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { SystemPrompt } from "@deepseek-ai/dsh-system-prompt";
 import { ToolRuntime } from "@deepseek-ai/dsh-tools";
 import type { ToolExecutionInput } from "@deepseek-ai/dsh-tools";
-import { WorkerThreadCodeRuntime } from "@deepseek-ai/dsh-code-runtime-worker-thread";
+import { installPtcRuntime } from "./ptc-fixture.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NativeWorkbenchApprovals } from "../../src/host/approval.ts";
 import { registerWorkbenchTools } from "../../src/host/tools.ts";
@@ -21,12 +21,12 @@ import type { WorkbenchJob } from "../../src/domain/workbench.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function setup(mode: "both" | "code" = "both") {
+async function setup(mode: "both" | "ptc" = "both") {
   const f = await fixture(); cleanups.push(f.cleanup);
   const ctx = new Context(); cleanups.push(() => ctx.fiber.dispose());
   await ctx.plugin(SystemPrompt, {}).await();
   await ctx.plugin(ToolRuntime, { mode, maxParallelSubCalls: 2 }).await();
-  await ctx.plugin(WorkerThreadCodeRuntime, { computeMs: 1000, maxWallMs: 10_000, maxOutputBytes: 512 * 1024, maxOldGenerationSizeMb: 128 }).await();
+  await installPtcRuntime(ctx);
   const approvals = new NativeWorkbenchApprovals(ctx);
   const channelRuns = vi.fn<PublishingAdapter["run"]>(async (_action, input) => ({ ok: true, code: "CHANNEL_PREPARED", configured: "configured", status: "prepared", revisionDigest: input.document.revisionDigest, remoteWriteAttempted: false, reconcileRequired: false, issues: [], artifacts: [] }));
   const channelAdapters: PublishingAdapter[] = (["zhihu", "xiaohongshu", "x"] as const).map(channel => ({ channel, discover: async () => ({ channel, adapter: "fixture", configured: "configured", actions: [] }), supports: () => true, preflight: async () => ({ ok: true, code: "CHANNEL_READY", configured: "configured", permission: "available", accountRef: `${channel}-account:${"a".repeat(32)}`, remoteWriteAttempted: false, reconcileRequired: false, issues: [], artifacts: [] }), run: channelRuns }));
@@ -49,7 +49,7 @@ describe("real DSH native/PTC registry pipeline (no model or account)", () => {
       const direct = await f.call(`wemedia_${operation}`, args);
       const nested = await f.code(`return await tools.wemedia_${operation}(${JSON.stringify(args)});`);
       expect(direct.isError).toBe(false); expect(nested.isError).toBe(false);
-      expect(nested.value).toEqual({ logs: [], result: direct.value });
+      expect(nested.value).toEqual({ logs: [], sandbox: { mode: "read-only", denied: false, enforcement: expect.stringMatching(/^(full|partial)$/) }, result: direct.value });
       expect(direct.value).toMatchObject({ ok: true });
     }
     const result = await f.call("wemedia_channel_preview_action", { contentRef: doc.contentRef, channel, action: "prepare" });
@@ -95,7 +95,7 @@ describe("real DSH native/PTC registry pipeline (no model or account)", () => {
     const direct = await f.call("wemedia_preflight", { contentRef: document.contentRef });
     const nested = await f.code(`return await tools.wemedia_preflight({contentRef:${JSON.stringify(document.contentRef)}});`);
     expect(direct.isError).toBe(false); expect(nested.isError).toBe(false);
-    expect(nested.value).toEqual({ logs: [], result: direct.value });
+    expect(nested.value).toEqual({ logs: [], sandbox: { mode: "read-only", denied: false, enforcement: expect.stringMatching(/^(full|partial)$/) }, result: direct.value });
     for (const stage of ["pre", "execute", "post", "result"]) {
       expect(trace.filter(item => item === `${stage}:wemedia_preflight`)).toHaveLength(2);
       expect(trace.filter(item => item === `${stage}:run_code`)).toHaveLength(1);
@@ -141,7 +141,7 @@ describe("real DSH native/PTC registry pipeline (no model or account)", () => {
     expect(f.remoteCalls()).toBe(0);
   });
   it("honors existing code-only presentation without changing it and cancels pre-aborted calls", async () => {
-    const f = await setup("code");
+    const f = await setup("ptc");
     const direct = await f.call("wemedia_snapshot", {});
     expect(direct.isError).toBe(true); expect(JSON.stringify(direct)).toContain("UNKNOWN_TOOL");
     const nested = await f.code("return await tools.wemedia_snapshot({});");
@@ -158,7 +158,7 @@ describe("real DSH native/PTC registry pipeline (no model or account)", () => {
     const nested = await f.code(`return await tools.wemedia_${operation}({contentRef:${JSON.stringify(document.contentRef)}});`);
     expect(direct.isError).toBe(false); expect(nested.isError).toBe(false);
     expect(direct.value).toMatchObject({ ok: true, value: { operation, status: "block", previewFidelity: "degraded", issues: [{ code: "QUALITY_GAP" }] } });
-    expect(nested.value).toEqual({ logs: [], result: direct.value });
+    expect(nested.value).toEqual({ logs: [], sandbox: { mode: "read-only", denied: false, enforcement: expect.stringMatching(/^(full|partial)$/) }, result: direct.value });
     expect((await f.documents.read(document.contentRef)).reviews).toEqual([]);
     expect(f.remoteCalls()).toBe(0);
   });
